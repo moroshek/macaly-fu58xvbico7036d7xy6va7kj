@@ -305,6 +305,11 @@ export default function MedicalIntakePage() {
       console.log("Joining Ultravox call with URL:", joinUrl.substring(0, 20) + "...");
       await session.joinCall(joinUrl);
       console.log("Successfully joined Ultravox call");
+      logClientEvent("Successfully joined Ultravox call - transitioning to interviewing state");
+
+      // Set interviewing state immediately after successful join
+      setUiState('interviewing');
+      setIsInterviewActive(true);
 
       // Unmute microphone
       try {
