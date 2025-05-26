@@ -734,8 +734,8 @@ export default function LandingPage() {
                   const newTranscripts = session.transcripts.slice(lastProcessedIndex);
                   console.log(`[Transcripts Event] New transcripts to process: ${newTranscripts.length}`);
                   
-                  // Process each new transcript
-                  newTranscripts.forEach((transcript: any, index: number) => {
+                  // Process each new transcript - SIMPLIFIED VERSION
+                  newTranscripts.forEach((transcript: any) => {
                     // Use safe processing function to validate transcript before processing
                     const safeProcessTranscript = (transcript: any, index: number) => {
                       try {
@@ -796,7 +796,7 @@ export default function LandingPage() {
                       }
                     };
                     
-                    const utterance = safeProcessTranscript(transcript, lastProcessedIndex + index);
+                    const utterance = safeProcessTranscript(transcript, lastProcessedIndex);
                     if (utterance) {
                       // Update state with new final transcript
                       console.log(`[Transcripts Event] Adding utterance: ${utterance.speaker}: "${utterance.text.substring(0, 30)}..."`);
@@ -1154,7 +1154,7 @@ export default function LandingPage() {
         logClientEvent(`[handleEndInterview] Error in transcript submission: ${(error as Error).message || 'Unknown error'}`);
         
         // Attempt recovery - ensure we're in displaying_results state with some data
-        if (uiState !== 'displaying_results') {
+        if (uiState !== 'displaying_results' && uiState !== 'error') {
           setUiState('displaying_results');
           
           // If we don't have summary data yet, create fallback data
@@ -1195,7 +1195,7 @@ export default function LandingPage() {
   const enableMockData = () => {
     // This function is a helper for development and testing only
     // It allows testing the summary and analysis boxes without connecting to the real API
-    return true; // Set this to true to use mock data
+    return false; // Set this to false to use real data from the API
   };
 
   const assembleAndSubmitTranscript = async () => {
@@ -1243,7 +1243,7 @@ export default function LandingPage() {
     
     // For testing purposes, we still allow using mock data to ensure the UI flow works
     // In a production environment, this would be controlled by an environment variable
-    const USE_MOCK_DATA = true; // Always true for demo purposes
+    const USE_MOCK_DATA = enableMockData(); // Use the enableMockData function for consistency
 
     logClientEvent("[assembleAndSubmitTranscript] Proceeding with transcript assembly.");
     console.log("[assembleAndSubmitTranscript] Proceeding with transcript assembly.");
@@ -1290,7 +1290,7 @@ export default function LandingPage() {
         logClientEvent("[assembleAndSubmitTranscript] Calling submit-transcript API.");
         const response = await axios.post(
           `${API_BASE_URL}/api/v1/submit-transcript`,
-          { callId: callIdToUse, transcript: fullTranscript },
+          { callId: callId, transcript: fullTranscript },
           { timeout: 60000, signal: abortControllerRef.current.signal }
         );
 
