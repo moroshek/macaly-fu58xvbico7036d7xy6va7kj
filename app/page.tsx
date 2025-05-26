@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import axios from "axios";
 import { UltravoxSession } from 'ultravox-client';
 import DevTray from "@/components/DevTray";
+import VoiceActivityIndicator from "@/components/VoiceActivityIndicator";
 
 // Configure axios with retries
 axios.defaults.timeout = 30000;
@@ -345,14 +346,19 @@ export default function MedicalIntakePage() {
     setAnalysisData(null);
     setCurrentTranscript([]);
 
+    // Check for internet connection first
+    if (!navigator.onLine) {
+      toast({
+        title: "No Internet Connection",
+        description: "Please check your connection and try again.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     try {
       setUiState('initiating');
       logClientEvent("Starting interview initialization");
-
-      if (!navigator.onLine) {
-        logClientEvent("Interview failed - user is offline");
-        throw new Error("You appear to be offline. Please check your connection.");
-      }
 
       // Request microphone permission
       try {
@@ -688,6 +694,12 @@ export default function MedicalIntakePage() {
           </div>
         </div>
       </header>
+      
+      {/* Add Voice Activity Indicator */}
+      <VoiceActivityIndicator 
+        uvStatus={uvStatus} 
+        isInterviewActive={isInterviewActive} 
+      />
       
       {/* DevTray */}
       <DevTray 

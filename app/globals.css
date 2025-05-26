@@ -2,6 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Animation delay for Voice Activity Indicator */
+.animation-delay-200 {
+  animation-delay: 200ms;
+}
+
+/* Optional: Add smooth voice bar animations */
+@keyframes voice-wave {
+  0%, 100% { 
+    transform: scaleY(0.5); 
+  }
+  50% { 
+    transform: scaleY(1.2); 
+  }
+}
+
+.voice-bar {
+  animation: voice-wave 1s ease-in-out infinite;
+}
+
 /* DevTray animations and styles */
 @keyframes fade-in-up {
   from {
