@@ -58,7 +58,7 @@ axios.interceptors.response.use(
   }
 );
 
-type Utterance = {
+export type Utterance = {
   speaker: string;
   text: string;
 };
