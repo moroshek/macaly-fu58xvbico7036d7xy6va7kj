@@ -12,7 +12,7 @@ const Area1IdleDisplay: React.FC<Area1IdleDisplayProps> = ({ onStartInterview })
   return (
     <button
       onClick={onStartInterview}
-      className="absolute inset-0 w-full flex flex-col items-center justify-center cursor-pointer transition-all hover:bg-teal-50/50 active:scale-[0.99]"
+      className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer transition-all hover:bg-teal-50/50 active:scale-[0.99] w-full"
       aria-label="Start Interview"
     >
       <div className="w-full max-w-md flex flex-col items-center">

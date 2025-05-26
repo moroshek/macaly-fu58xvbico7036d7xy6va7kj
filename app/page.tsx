@@ -701,67 +701,148 @@ export default function LandingPage() {
             typeof (session as any).onUserMessageTranscribed === 'undefined') &&
             typeof session.addEventListener === 'function') {
             console.log("Using addEventListener for transcript events");
+            
+            // Track processed transcript indices to avoid duplicates
+            let lastProcessedIndex = 0;
+            
             session.addEventListener('transcripts', (event: any) => {
               try {
                 // Log the full event structure to help with debugging
-                console.log("Transcript event received:", typeof event === 'object' ? 
+                console.log("[RAW TRANSCRIPTS DEBUG] Event object:", typeof event === 'object' ? 
                   JSON.stringify(event, null, 2) : event);
-                logClientEvent(`Transcript event received, type: ${typeof event}`);
+                console.log("[RAW TRANSCRIPTS DEBUG] Session object keys:", Object.keys(session));
                 
-                // Handle various event structures that might come from the SDK
-                if (event && event.data && typeof event.data.speaker === 'string') {
-                  // Standard structure
-                  if (event.data.speaker === 'agent') {
-                    handleAgentMessage(event.data);
-                  } else {
-                    handleUserMessage(event.data);
-                  }
-                } else if (event && typeof event.speaker === 'string') {
-                  // Event itself might be the transcript data
-                  if (event.speaker === 'agent') {
-                    handleAgentMessage(event);
-                  } else {
-                    handleUserMessage(event);
-                  }
-                } else if (event && event.data && typeof event.data === 'object') {
-                  // Try to extract data with a default speaker
-                  const extractedData = {
-                    ...event.data,
-                    speaker: event.data.speaker || 'agent' // Default to agent if not specified
-                  };
-                      handleAgentMessage(extractedData);
-                } else if (event && typeof event === 'object') {
-                  // Last resort, try to extract any useful information
-                  let extractedText = '';
-                  let inferredSpeaker = 'unknown';
+                // CRITICAL FIX: Access transcripts from session.transcripts property, not event object
+                console.log("[RAW TRANSCRIPTS DEBUG] Session.transcripts:", session.transcripts);
+                console.log("[RAW TRANSCRIPTS DEBUG] Session.transcripts type:", typeof session.transcripts);
+                console.log("[RAW TRANSCRIPTS DEBUG] Session.transcripts length:", session.transcripts?.length);
+                
+                // Check if session.transcripts is available and is an array
+                if (session.transcripts && Array.isArray(session.transcripts)) {
+                  // Log each individual transcript object
+                  session.transcripts.forEach((transcript: any, index: number) => {
+                    console.log(`[RAW TRANSCRIPTS DEBUG] Transcript ${index}:`, {
+                      text: transcript.text,
+                      isFinal: transcript.isFinal,
+                      speaker: transcript.speaker,
+                      medium: transcript.medium,
+                      fullObject: transcript
+                    });
+                  });
                   
-                  // Try to find text in various possible locations
-                  if (typeof event.text === 'string') extractedText = event.text;
-                  else if (event.data && typeof event.data.text === 'string') extractedText = event.data.text;
-                  else if (event.message && typeof event.message.text === 'string') extractedText = event.message.text;
-                  else if (event.data && event.data.message && typeof event.data.message.text === 'string') 
-                    extractedText = event.data.message.text;
+                  // Process only new transcripts since last processing
+                  const newTranscripts = session.transcripts.slice(lastProcessedIndex);
+                  console.log(`[Transcripts Event] New transcripts to process: ${newTranscripts.length}`);
                   
-                  // Try to infer speaker
-                  if (event.role === 'assistant' || event.role === 'agent') inferredSpeaker = 'agent';
-                  else if (event.role === 'user') inferredSpeaker = 'user';
-                  else if (event.data && event.data.role === 'assistant') inferredSpeaker = 'agent';
-                  else if (event.data && event.data.role === 'user') inferredSpeaker = 'user';
-                  
-                  if (extractedText) {
-                    console.log(`Extracted text from non-standard event, inferred speaker: ${inferredSpeaker}`);
-                    if (inferredSpeaker === 'agent') {
-                      handleAgentMessage({ text: extractedText, speaker: 'agent', isFinal: true });
-                    } else {
-                      handleUserMessage({ text: extractedText, speaker: inferredSpeaker, isFinal: true });
+                  // Process each new transcript
+                  newTranscripts.forEach((transcript: any, index: number) => {
+                    // Use safe processing function to validate transcript before processing
+                    const safeProcessTranscript = (transcript: any, index: number) => {
+                      try {
+                        console.log(`[SAFE PROCESS] Processing transcript ${index}:`, transcript);
+                        
+                        // Validate transcript structure
+                        if (!transcript) {
+                          console.warn(`[SAFE PROCESS] Transcript ${index} is null/undefined`);
+                          return null;
+                        }
+                        
+                        if (typeof transcript.text !== 'string') {
+                          console.warn(`[SAFE PROCESS] Transcript ${index} has invalid text:`, typeof transcript.text, transcript.text);
+                          return null;
+                        }
+                        
+                        // Some implementations might not have isFinal flag - assume true if missing
+                        const isFinal = typeof transcript.isFinal === 'boolean' ? transcript.isFinal : true;
+                        
+                        // Validate or default speaker
+                        let speaker = 'unknown';
+                        if (transcript.speaker === 'user' || transcript.speaker === 'agent') {
+                          speaker = transcript.speaker;
+                        } else if (transcript.speaker) {
+                          // Try to normalize other speaker values
+                          const speakerLower = transcript.speaker.toLowerCase();
+                          if (speakerLower.includes('user') || speakerLower.includes('human')) {
+                            speaker = 'user';
+                          } else if (speakerLower.includes('agent') || speakerLower.includes('ai') || speakerLower.includes('assistant')) {
+                            speaker = 'agent';
+                          } else {
+                            console.warn(`[SAFE PROCESS] Transcript ${index} has unknown speaker:`, transcript.speaker);
+                            // Default unknown speakers to agent
+                            speaker = 'agent';
+                          }
+                        } else {
+                          // If no speaker, try to infer from medium or just default to agent
+                          speaker = 'agent';
+                        }
+                        
+                        // Only process final transcripts unless isFinal is missing
+                        if (!isFinal && typeof transcript.isFinal === 'boolean') {
+                          console.log(`[SAFE PROCESS] Transcript ${index} is not final, skipping`);
+                          return null;
+                        }
+                        
+                        const utterance = {
+                          speaker: speaker,
+                          text: transcript.text.trim()
+                        };
+                        
+                        console.log(`[SAFE PROCESS] Created valid utterance:`, utterance);
+                        return utterance;
+                        
+                      } catch (error) {
+                        console.error(`[SAFE PROCESS] Error processing transcript ${index}:`, error, transcript);
+                        return null;
+                      }
+                    };
+                    
+                    const utterance = safeProcessTranscript(transcript, lastProcessedIndex + index);
+                    if (utterance) {
+                      // Update state with new final transcript
+                      console.log(`[Transcripts Event] Adding utterance: ${utterance.speaker}: "${utterance.text.substring(0, 30)}..."`);
+                      logClientEvent(`ADDING_TRANSCRIPT: ${utterance.speaker}: "${utterance.text.substring(0, 30)}..."`); 
+                      
+                      setCurrentTranscript(prev => {
+                        const updated = [...prev, utterance];
+                        console.log(`[Transcripts Event] Updated transcript state length: ${updated.length}`);
+                        return updated;
+                      });
                     }
+                  });
+                  
+                  // Update the index to avoid reprocessing
+                  lastProcessedIndex = session.transcripts.length;
+                } else {
+                  // Fallback to traditional event handling if session.transcripts is not available
+                  logClientEvent("Warning: session.transcripts not available, falling back to event data parsing");
+                  console.warn("session.transcripts not available, falling back to event data parsing", event);
+                  
+                  // Previous event-based handling (kept as fallback)
+                  if (event && event.data && typeof event.data.speaker === 'string') {
+                    // Standard structure
+                    if (event.data.speaker === 'agent') {
+                      handleAgentMessage(event.data);
+                    } else {
+                      handleUserMessage(event.data);
+                    }
+                  } else if (event && typeof event.speaker === 'string') {
+                    // Event itself might be the transcript data
+                    if (event.speaker === 'agent') {
+                      handleAgentMessage(event);
+                    } else {
+                      handleUserMessage(event);
+                    }
+                  } else if (event && event.data && typeof event.data === 'object') {
+                    // Try to extract data with a default speaker
+                    const extractedData = {
+                      ...event.data,
+                      speaker: event.data.speaker || 'agent' // Default to agent if not specified
+                    };
+                    handleAgentMessage(extractedData);
                   } else {
                     console.warn("Received transcript event via addEventListener with missing/malformed data:", event);
                     logClientEvent("Warning: Received transcript event (addEventListener) with malformed data.");
                   }
-                } else {
-                  console.warn("Received transcript event via addEventListener with missing/malformed data:", event);
-                  logClientEvent("Warning: Received transcript event (addEventListener) with malformed data.");
                 }
               } catch (err) {
                 console.error("Error processing transcript event:", err, "Event:", event);
@@ -1386,8 +1467,8 @@ export default function LandingPage() {
               </div>
             </div>
 
-            {/* Main Interaction Area - Conditional layout based on state */}
-            <div className={`grid grid-cols-1 ${(uiState === 'processing_transcript' || uiState === 'displaying_results') ? 'md:grid-cols-2' : 'md:grid-cols-1 max-w-xl mx-auto'} gap-8`}>
+            {/* Main Interaction Area - FIXED LAYOUT FOR CONSISTENT DISPLAY */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               {/* AREA 1: Audio Interaction / Status */}
               <div className="relative h-[400px] rounded-lg overflow-hidden bg-gradient-to-br from-teal-50 to-blue-50 border border-teal-100 shadow-md flex flex-col">
                 {uiState === 'idle' && <Area1IdleDisplay onStartInterview={handleStartInterview} />}
@@ -1405,19 +1486,17 @@ export default function LandingPage() {
               </div>
               
               {/* AREA 2 & 3: Intake Summary and Clinical Insights */}
-              {(uiState === 'processing_transcript' || uiState === 'displaying_results') && (
-                <div className="space-y-8">
-                  <SummaryResultsBox
-                    summaryData={summaryData}
-                    isLoading={uiState === 'processing_transcript'}
-                    formatSummaryField={formatSummaryField}
-                  />
-                  <AnalysisResultsBox
-                    analysisData={analysisData}
-                    isLoading={uiState === 'processing_transcript'}
-                  />
-                </div>
-              )}
+              <div className={`space-y-8 ${!(uiState === 'processing_transcript' || uiState === 'displaying_results') ? 'hidden' : ''}`}>
+                <SummaryResultsBox
+                  summaryData={summaryData}
+                  isLoading={uiState === 'processing_transcript'}
+                  formatSummaryField={formatSummaryField}
+                />
+                <AnalysisResultsBox
+                  analysisData={analysisData}
+                  isLoading={uiState === 'processing_transcript'}
+                />
+              </div>
             </div>
           </div>
         </section>
