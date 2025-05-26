@@ -14,14 +14,16 @@ const AnalysisResultsBox: React.FC<AnalysisResultsBoxProps> = ({ analysisData, i
       <div className="bg-gradient-to-r from-blue-500 to-blue-600 py-3 px-4">
         <h2 className="text-white text-lg font-medium">Clinical Insights</h2>
       </div>
-      <div className="p-4 min-h-[100px] flex items-center justify-center">
+      <div className="p-4 min-h-[100px]">
         {isLoading ? (
-          <Loader2 size={24} className="text-blue-500 animate-spin" />
+          <div className="flex items-center justify-center h-[100px]">
+            <Loader2 size={24} className="text-blue-500 animate-spin" />
+          </div>
         ) : (
           analysisData && analysisData.trim() !== '' ? (
             <p className="text-sm text-gray-700 whitespace-pre-line">{analysisData}</p>
           ) : (
-            <p className="text-sm text-gray-500 italic">No clinical analysis available.</p>
+            <p className="text-sm text-gray-500 italic text-center">No clinical analysis available.</p>
           )
         )}
       </div>
