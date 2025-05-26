@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import axios from "axios";
 import { UltravoxSession } from 'ultravox-client';
+import DevTray from "@/components/DevTray";
 
 // Configure axios with retries
 axios.defaults.timeout = 30000;
@@ -84,7 +85,7 @@ export default function MedicalIntakePage() {
         'thank you for completing', 'thank you for your time',
         'take care', 'goodbye', 'have a good day',
         'thanks for answering', 'that concludes',
-        'we\'re all set', 'interview is complete'
+        "we're all set", 'interview is complete'
       ];
 
       return endPhrases.some(phrase => lowerText.includes(phrase));
@@ -96,11 +97,15 @@ export default function MedicalIntakePage() {
   // Network connectivity check
   const checkApiConnectivity = async () => {
     try {
+      logClientEvent('Testing API connectivity');
       const response = await axios.get(`${API_BASE_URL}/health`, { timeout: 10000 });
       if (!isOnline) setIsOnline(true);
+      logApiCall('Backend', 'GET /health', 'success', response.status);
       return true;
     } catch (error) {
       console.warn('API connectivity test failed:', error);
+      logClientEvent(`API connectivity test failed: ${error}`);
+      logApiCall('Backend', 'GET /health', 'failed');
       setIsOnline(false);
       return false;
     }
@@ -150,7 +155,7 @@ export default function MedicalIntakePage() {
 
   const initUltravoxSession = async (joinUrl: string) => {
     try {
-      console.log("Initializing Ultravox session");
+      logClientEvent("Initializing Ultravox session");
       const session = new UltravoxSession();
       setUvSession(session);
 
@@ -159,7 +164,7 @@ export default function MedicalIntakePage() {
         const status = typeof event === 'string' ? event :
           event?.data || event?.status || 'unknown';
 
-        console.log("Ultravox status:", status);
+        logClientEvent(`Ultravox status: ${status}`);
         setUvStatus(status);
 
         const activeStates = ['idle', 'listening', 'thinking', 'speaking', 'connected', 'ready', 'active'];
@@ -188,7 +193,9 @@ export default function MedicalIntakePage() {
 
           // Access transcripts from session.transcripts property
           if (session.transcripts && Array.isArray(session.transcripts)) {
-            const newTranscripts = session.transcripts.filter((transcript: any) => {
+            // Get the new transcripts (ones we haven't processed yet)
+            const processedCount = currentTranscript.length;
+            const newTranscripts = session.transcripts.slice(processedCount).filter((transcript: any) => {
               // Only process final transcripts with valid text
               return transcript &&
                 typeof transcript.text === 'string' &&
@@ -196,20 +203,26 @@ export default function MedicalIntakePage() {
                 (transcript.isFinal !== false); // Include if isFinal is true or undefined
             });
 
-            // Add new transcripts to state
-            newTranscripts.forEach((transcript: any) => {
-              const speaker = transcript.speaker === 'user' ? 'user' : 'agent';
-              const utterance = { speaker, text: transcript.text.trim() };
+            console.log(`Found ${newTranscripts.length} new transcripts to process`);
 
-              setCurrentTranscript(prev => {
-                // Avoid duplicates
-                const exists = prev.some(u => u.speaker === speaker && u.text === utterance.text);
-                if (exists) return prev;
+            // Add new transcripts to state
+            if (newTranscripts.length > 0) {
+              newTranscripts.forEach((transcript: any) => {
+                const speaker = transcript.speaker === 'user' ? 'user' : 'agent';
+                const utterance = { speaker, text: transcript.text.trim() };
 
                 console.log(`Adding transcript: ${speaker}: ${utterance.text.substring(0, 50)}...`);
-                return [...prev, utterance];
+                
+                setCurrentTranscript(prev => {
+                  // Avoid duplicates
+                  const exists = prev.some(u => u.speaker === speaker && u.text === utterance.text);
+                  if (exists) return prev;
+                  return [...prev, utterance];
+                });
               });
-            });
+            }
+          } else {
+            console.log("No transcripts array found on session", session);
           }
         } catch (err) {
           console.error("Error processing transcript:", err);
@@ -252,38 +265,68 @@ export default function MedicalIntakePage() {
 
       // Error handler
       const handleError = (event: any) => {
-        console.error("Ultravox error:", event);
-        toast({
-          title: "Interview Error",
-          description: "There was a problem with the interview. Please try again.",
-          variant: "destructive"
-        });
-        setUiState('error');
+        const errorObj = event?.error || event;
+        console.error("Ultravox error:", errorObj);
+        
+        // Don't show error UI if we're already in a different state
+        if (uiState === 'interviewing' || uiState === 'initiating') {
+          toast({
+            title: "Interview Error",
+            description: errorObj?.message || "There was a problem with the interview. Please try again.",
+            variant: "destructive"
+          });
+          setUiState('error');
+        }
       };
 
       // Set up event listeners
       if (typeof session.addEventListener === 'function') {
+        // Remove any existing listeners first to prevent duplicates
+        try {
+          session.removeEventListener('status', handleStatusChange);
+          session.removeEventListener('transcripts', handleTranscript);
+          session.removeEventListener('agentMessage', handleAgentMessage);
+          session.removeEventListener('error', handleError);
+        } catch (e) {
+          console.log("No previous listeners to remove");
+        }
+        
+        // Add new listeners
         session.addEventListener('status', handleStatusChange);
         session.addEventListener('transcripts', handleTranscript);
         session.addEventListener('agentMessage', handleAgentMessage);
         session.addEventListener('error', handleError);
+        
+        console.log("All event listeners attached successfully");
+      } else {
+        console.warn("addEventListener is not a function on session");
       }
 
-      console.log("Joining Ultravox call");
+      console.log("Joining Ultravox call with URL:", joinUrl.substring(0, 20) + "...");
       await session.joinCall(joinUrl);
+      console.log("Successfully joined Ultravox call");
 
       // Unmute microphone
-      if (typeof session.unmuteMic === 'function') {
-        session.unmuteMic();
-        console.log("Microphone unmuted");
+      try {
+        if (typeof session.unmuteMic === 'function') {
+          session.unmuteMic();
+          console.log("Microphone unmuted");
+        } else if (typeof (session as any).unmuteMicrophone === 'function') {
+          (session as any).unmuteMicrophone();
+          console.log("Microphone unmuted (alternate method)");
+        } else {
+          console.warn("No unmute method found on session");
+        }
+      } catch (micError) {
+        console.error("Error unmuting microphone:", micError);
       }
 
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error initializing Ultravox session:", error);
       toast({
         title: "Connection Error",
-        description: "Could not connect to the interview service. Please try again.",
+        description: error?.message || "Could not connect to the interview service. Please try again.",
         variant: "destructive"
       });
       setUiState('error');
@@ -299,42 +342,48 @@ export default function MedicalIntakePage() {
 
     try {
       setUiState('initiating');
-      console.log("Starting interview initialization");
+      logClientEvent("Starting interview initialization");
 
       if (!navigator.onLine) {
+        logClientEvent("Interview failed - user is offline");
         throw new Error("You appear to be offline. Please check your connection.");
       }
 
       // Request microphone permission
       try {
+        logClientEvent("Requesting microphone permission");
         await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log("Microphone access granted");
+        logClientEvent("Microphone access granted");
       } catch (micError) {
-        console.error("Microphone access denied:", micError);
+        logClientEvent(`Microphone access denied: ${micError}`);
         throw new Error("Microphone access is required for the interview. Please grant permission.");
       }
 
       pendingRequestsRef.current++;
 
-      console.log("Calling initiate-intake API");
+      logClientEvent("Calling initiate-intake API");
       const response = await axios.post(`${API_BASE_URL}/api/v1/initiate-intake`, {});
+      logApiCall('Backend', 'POST /api/v1/initiate-intake', 'success', response.status);
 
       const { joinUrl, callId: newCallId } = response.data;
       if (!joinUrl || !newCallId) {
+        logClientEvent("Invalid response - missing joinUrl or callId");
         throw new Error("Invalid response from server. Missing joinUrl or callId.");
       }
 
       setCallId(newCallId);
-      console.log(`Call ID received: ${newCallId.substring(0, 8)}...`);
+      logClientEvent(`Call ID received: ${newCallId.substring(0, 8)}...`);
 
       const success = await initUltravoxSession(joinUrl);
       if (!success) {
+        logClientEvent("Failed to initialize Ultravox session");
         throw new Error("Failed to initialize interview session.");
       }
 
-      console.log("Interview started successfully");
+      logClientEvent("Interview started successfully");
     } catch (error: any) {
       console.error("Error starting interview:", error);
+      logClientEvent(`Error starting interview: ${error.message || 'Unknown error'}`);
 
       let errorMessage = "An unexpected error occurred. Please try again.";
       if (error.message) {
@@ -345,6 +394,7 @@ export default function MedicalIntakePage() {
         } else {
           errorMessage = `Server error (${error.response.status}). Please try again later.`;
         }
+        logApiCall('Backend', 'POST /api/v1/initiate-intake', 'failed', error.response?.status);
       }
 
       toast({
@@ -377,11 +427,37 @@ export default function MedicalIntakePage() {
       console.error("Error leaving Ultravox call:", error);
     }
 
+    // Log transcript information
+    console.log(`Current transcript length: ${currentTranscript.length}`);
+    if (currentTranscript.length > 0) {
+      console.log("Transcript samples:");
+      currentTranscript.slice(0, 3).forEach((item, index) => {
+        console.log(`Transcript ${index}: ${item.speaker}: "${item.text.substring(0, 50)}..."`);
+      });
+    }
+
     // Process transcript if we have data
     if (currentTranscript.length > 0) {
       console.log("Processing transcript data");
       await assembleAndSubmitTranscript();
     } else {
+      // Check if we can get transcripts directly from the session as a fallback
+      if (uvSession && uvSession.transcripts && Array.isArray(uvSession.transcripts) && uvSession.transcripts.length > 0) {
+        console.log("No transcript in state, but found transcripts in session. Using those instead.");
+        const sessionTranscripts = uvSession.transcripts
+          .filter((t: any) => t && t.text && typeof t.text === 'string')
+          .map((t: any) => ({
+            speaker: t.speaker === 'user' ? 'user' : 'agent',
+            text: t.text.trim()
+          }));
+          
+        if (sessionTranscripts.length > 0) {
+          setCurrentTranscript(sessionTranscripts);
+          await assembleAndSubmitTranscript();
+          return;
+        }
+      }
+      
       console.log("No transcript data to process");
       toast({
         title: "Interview Ended",
@@ -392,14 +468,14 @@ export default function MedicalIntakePage() {
   };
 
   const assembleAndSubmitTranscript = async () => {
-    console.log("Starting transcript submission");
+    logClientEvent("Starting transcript submission");
 
     setSummaryData(null);
     setAnalysisData(null);
     setUiState('processing_transcript');
 
     if (currentTranscript.length === 0) {
-      console.log("No transcript data to submit");
+      logClientEvent("No transcript data to submit");
       toast({
         title: "Missing Data",
         description: "No conversation data was recorded.",
@@ -410,7 +486,7 @@ export default function MedicalIntakePage() {
     }
 
     if (!callId) {
-      console.log("Missing call ID");
+      logClientEvent("Missing call ID");
       toast({
         title: "Missing Identifier",
         description: "Missing call identifier.",
@@ -425,19 +501,30 @@ export default function MedicalIntakePage() {
         `${utterance.speaker === 'agent' ? 'Agent' : 'User'}: ${utterance.text}`
       ).join('\n');
 
-      console.log(`Submitting transcript (${fullTranscript.length} chars)`);
+      logClientEvent(`Submitting transcript (${fullTranscript.length} chars)`);
+      logClientEvent(`First 200 chars of transcript: ${fullTranscript.substring(0, 200)}...`);
 
       pendingRequestsRef.current++;
 
+      const payload = { callId: callId, transcript: fullTranscript };
+      logClientEvent("Preparing POST request payload");
+
+      logApiCall('Backend', 'POST /api/v1/submit-transcript', 'pending');
       const response = await axios.post(
         `${API_BASE_URL}/api/v1/submit-transcript`,
-        { callId: callId, transcript: fullTranscript },
-        { timeout: 60000 }
+        payload,
+        { 
+          timeout: 60000,
+          headers: { 'Content-Type': 'application/json' }
+        }
       );
+      logApiCall('Backend', 'POST /api/v1/submit-transcript', 'success', response.status);
 
+      logClientEvent(`API response received: ${response.status}`);
       const { summary, analysis } = response.data;
 
       if (!summary || !analysis) {
+        logClientEvent("Invalid response - missing summary or analysis");
         throw new Error("Invalid response from server. Missing summary or analysis.");
       }
 
@@ -451,19 +538,25 @@ export default function MedicalIntakePage() {
         notesOnInteraction: summary.notesOnInteraction || null
       };
 
+      logClientEvent("Setting summary and analysis data");
+      logClientEvent(`Analysis length: ${analysis.length} chars`);
+
       setSummaryData(validatedSummary);
       setAnalysisData(analysis);
 
+      // Force a state update to ensure UI changes
       setTimeout(() => {
+        logClientEvent("Changing UI state to displaying_results");
         setUiState('displaying_results');
         toast({
           title: "Interview Complete",
           description: "Your medical intake interview has been processed successfully."
         });
-      }, 100);
+      }, 300);
 
     } catch (error: any) {
-      console.error("Error submitting transcript:", error);
+      logClientEvent(`Error submitting transcript: ${error.message || 'Unknown error'}`);
+      logApiCall('Backend', 'POST /api/v1/submit-transcript', 'failed', error.response?.status);
 
       // Create fallback data for demo purposes
       const fallbackSummary: SummaryData = {
@@ -473,20 +566,22 @@ export default function MedicalIntakePage() {
         pastMedicalHistory: null,
         medications: null,
         allergies: null,
-        notesOnInteraction: "Note: This is fallback data due to processing error."
+        notesOnInteraction: `Note: This is fallback data due to processing error: ${error.message || "Unknown error"}`
       };
 
+      logClientEvent("Setting fallback summary and analysis data");
       setSummaryData(fallbackSummary);
       setAnalysisData("This is fallback analysis data. Please retry your interview for accurate results.");
 
       setTimeout(() => {
+        logClientEvent("Changing UI state to displaying_results (fallback)");
         setUiState('displaying_results');
         toast({
           title: "Processing Issue",
-          description: "There was an issue processing your interview. Please try again.",
+          description: error.message || "There was an issue processing your interview. Please try again.",
           variant: "destructive"
         });
-      }, 100);
+      }, 300);
 
     } finally {
       pendingRequestsRef.current = Math.max(0, pendingRequestsRef.current - 1);
@@ -544,6 +639,32 @@ export default function MedicalIntakePage() {
     }
   };
 
+  // Prepare DevTray props
+  const clientEventsLog = useRef<string[]>([]).current;
+  const logClientEvent = (event: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = `${timestamp}: ${event}`;
+    console.log(logEntry);
+    clientEventsLog.unshift(logEntry);
+    if (clientEventsLog.length > 50) clientEventsLog.pop();
+  };
+
+  const backendCommsLog = useRef<Array<{
+    timestamp: string;
+    serviceTarget: string;
+    method: string;
+    outcome: string;
+    statusCode?: number;
+  }>>([]).current;
+
+  // Log API calls for DevTray
+  const logApiCall = (target: string, method: string, outcome: string, statusCode?: number) => {
+    const timestamp = new Date().toLocaleTimeString();
+    backendCommsLog.unshift({ timestamp, serviceTarget: target, method, outcome, statusCode });
+    if (backendCommsLog.length > 20) backendCommsLog.pop();
+    console.log(`API Call: ${target} ${method} - ${outcome}${statusCode ? ` (${statusCode})` : ''}`);
+  };
+
   return (
     <div className="flex flex-col min-h-screen">
       <header className="container mx-auto py-4 px-4 md:px-6">
@@ -562,6 +683,24 @@ export default function MedicalIntakePage() {
           </div>
         </div>
       </header>
+      
+      {/* DevTray */}
+      <DevTray 
+        appPhase={uiState}
+        sessionStatus={uvStatus}
+        sessionId={callId}
+        isSessionActive={isInterviewActive}
+        micStatus={uvSession ? 'active' : 'inactive'}
+        utteranceCount={currentTranscript.length}
+        lastUtteranceSource={currentTranscript.length > 0 ? currentTranscript[currentTranscript.length - 1].speaker : null}
+        submittedDataLength={currentTranscript.length > 0 ? currentTranscript.map(u => u.text).join('').length : null}
+        backendCommsLog={backendCommsLog}
+        outputSet1Received={!!summaryData}
+        outputSet1FieldCount={summaryData ? Object.keys(summaryData).filter(k => summaryData[k] !== null).length : null}
+        outputSet2Received={!!analysisData}
+        outputSet2ApproxLength={analysisData ? analysisData.length : null}
+        clientEventsLog={clientEventsLog}
+      />
 
       <main className="flex-1">
         <section className="container mx-auto py-12 md:py-24 px-4 md:px-6">

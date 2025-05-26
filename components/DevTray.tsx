@@ -172,7 +172,7 @@ export default function DevTray({
                     {backendCommsLog.slice(-5).map((log, index) => (
                       <div key={index} className="text-[10px] leading-tight">
                         <span className="text-gray-500">{log.timestamp}</span>
-                        <span className="text-blue-400"> {log.serviceTarget}</span>
+                        <span className="text-blue-400"> {log.serviceTarget === 'Backend' ? 'Cloud Application Back-End' : log.serviceTarget}</span>
                         <span className="text-teal-300"> {log.method}</span>
                         <span className={`${log.outcome === 'success' ? 'text-green-400' : 'text-red-400'}`}> {log.outcome}</span>
                         {log.statusCode && <span className="text-yellow-400"> ({log.statusCode})</span>}
