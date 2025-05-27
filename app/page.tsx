@@ -68,28 +68,46 @@ export default function MedicalIntakePage() {
   const { toast } = useToast();
   const pendingRequestsRef = useRef<number>(0);
 
-  // Check if conversation should end based on agent message
+  // Enhanced shouldEndConversation function (backup detection)
   const shouldEndConversation = (message: any): boolean => {
     if (!message) return false;
 
-    // Check for tool calls (like hangUp)
+    // Check for explicit hangUp tool calls
     if (message.toolCalls && Array.isArray(message.toolCalls)) {
-      return message.toolCalls.some((tool: any) =>
-        tool && (tool.name === 'hangUp' || tool.toolName === 'hangUp')
-      );
+      const hangUpCall = message.toolCalls.find((call: any) => {
+        if (!call) return false;
+        
+        const toolName = call.toolName || call.name || '';
+        return toolName.toLowerCase().includes('hangup') || 
+               toolName.toLowerCase().includes('hang_up') ||
+               toolName.toLowerCase().includes('hang-up');
+      });
+      
+      if (hangUpCall) {
+        console.log("Found hangUp tool call in message:", hangUpCall);
+        return true;
+      }
     }
 
-    // Check for end phrases in message text
-    if (message.text && typeof message.text === 'string') {
-      const lowerText = message.text.toLowerCase();
+    // Check message text for end phrases
+    const textToCheck = message.content || message.text || '';
+    if (typeof textToCheck === 'string') {
+      const lowerText = textToCheck.toLowerCase();
       const endPhrases = [
         'thank you for completing', 'thank you for your time',
-        'take care', 'goodbye', 'have a good day',
-        'thanks for answering', 'that concludes',
-        "we're all set", 'interview is complete'
+        'that concludes', 'interview complete', 'interview is complete',
+        'have a great day', 'have a good day', 'take care',
+        'goodbye', 'provider will review', 'doctor will see you',
+        'staff will be with you', 'submitted for review',
+        'all done', 'finished', 'complete'
       ];
 
-      return endPhrases.some(phrase => lowerText.includes(phrase));
+      for (const phrase of endPhrases) {
+        if (lowerText.includes(phrase)) {
+          console.log(`Found end phrase: "${phrase}"`);
+          return true;
+        }
+      }
     }
 
     return false;
@@ -157,13 +175,17 @@ export default function MedicalIntakePage() {
   const initUltravoxSession = async (joinUrl: string) => {
     try {
       logClientEvent("Initializing Ultravox session");
-      const session = new UltravoxSession();
+      
+      // CRITICAL: Enable experimental messages to detect tool calls
+      const session = new UltravoxSession({
+        experimentalMessages: true as any // This is essential for detecting hangUp tool calls
+      });
       setUvSession(session);
 
       // Status change handler
       const handleStatusChange = (event: any) => {
         const status = typeof event === 'string' ? event :
-          event?.data || event?.status || 'unknown';
+          event?.data || event?.status || session.status || 'unknown';
 
         logClientEvent(`Ultravox status: ${status}`);
         setUvStatus(status);
@@ -171,13 +193,13 @@ export default function MedicalIntakePage() {
         const activeStates = ['idle', 'listening', 'thinking', 'speaking', 'connected', 'ready', 'active'];
 
         if (status === 'disconnected') {
-          console.log("Ultravox session disconnected");
+          console.log("🔌 Ultravox session disconnected");
           setIsInterviewActive(false);
 
           // Auto-submit transcript if we have data and aren't already processing
           if (uiState !== 'processing_transcript' && uiState !== 'displaying_results' && currentTranscript.length > 0) {
-            console.log("Auto-submitting transcript after disconnection");
-            assembleAndSubmitTranscript();
+            console.log("📤 Auto-submitting transcript after disconnection");
+            setTimeout(() => assembleAndSubmitTranscript(), 500);
           } else if (currentTranscript.length === 0) {
             setUiState('idle');
           }
@@ -187,66 +209,108 @@ export default function MedicalIntakePage() {
         }
       };
 
-      // Transcript handler
+      // Enhanced transcript handler
       const handleTranscript = (event: any) => {
         try {
-          console.log("Transcript event received:", event);
+          console.log("📝 Transcript event received:", event);
 
-          // Access transcripts from session.transcripts property
           if (session.transcripts && Array.isArray(session.transcripts)) {
-            // Get the new transcripts (ones we haven't processed yet)
             const processedCount = currentTranscript.length;
             const newTranscripts = session.transcripts.slice(processedCount).filter((transcript: any) => {
-              // Only process final transcripts with valid text
               return transcript &&
                 typeof transcript.text === 'string' &&
                 transcript.text.trim() !== '' &&
-                (transcript.isFinal !== false); // Include if isFinal is true or undefined
+                transcript.isFinal !== false;
             });
 
-            console.log(`Found ${newTranscripts.length} new transcripts to process`);
+            console.log(`📝 Found ${newTranscripts.length} new transcripts to process`);
 
-            // Add new transcripts to state
             if (newTranscripts.length > 0) {
               newTranscripts.forEach((transcript: any) => {
                 const speaker = transcript.speaker === 'user' ? 'user' : 'agent';
                 const utterance = { speaker, text: transcript.text.trim() };
 
-                console.log(`Adding transcript: ${speaker}: ${utterance.text.substring(0, 50)}...`);
+                console.log(`➕ Adding transcript: ${speaker}: ${utterance.text.substring(0, 50)}...`);
                 
                 setCurrentTranscript(prev => {
-                  // Avoid duplicates
                   const exists = prev.some(u => u.speaker === speaker && u.text === utterance.text);
                   if (exists) return prev;
                   return [...prev, utterance];
                 });
               });
             }
-          } else {
-            console.log("No transcripts array found on session", session);
           }
         } catch (err) {
-          console.error("Error processing transcript:", err);
+          console.error("❌ Error processing transcript:", err);
         }
       };
 
-      // Agent message handler
+      // CRITICAL: Tool call detection via experimental messages
+      const handleExperimentalMessage = (event: any) => {
+        try {
+          const message = event?.data || event;
+          console.log("🔧 Experimental message received:", message);
+
+          if (message && typeof message === 'object') {
+            const messageStr = JSON.stringify(message).toLowerCase();
+            
+            // Check for hangUp tool calls (multiple possible formats)
+            const hangupIndicators = [
+              'hangup', 'hang_up', 'hang-up',
+              '"toolname":"hangup"', '"name":"hangup"',
+              '"tool_name":"hangup"', '"function":"hangup"'
+            ];
+
+            const foundHangup = hangupIndicators.some(indicator => messageStr.includes(indicator));
+            
+            if (foundHangup) {
+              console.log("🚨 DETECTED HANGUP TOOL CALL - Agent wants to end call!");
+              logClientEvent("🚨 Agent invoked hangUp tool - ending interview automatically");
+              
+              // End the interview after a delay to let final audio play
+              setTimeout(() => {
+                if (uiState === 'interviewing' && isInterviewActive) {
+                  console.log("🔚 Auto-ending interview due to hangUp tool call");
+                  handleEndInterview();
+                }
+              }, 2000);
+              return;
+            }
+
+            // Check for completion phrases in experimental messages
+            const completionIndicators = [
+              'interview complete', 'interview is complete', 
+              'thank you for completing', 'that concludes',
+              'all done', 'finished with questions'
+            ];
+
+            const foundCompletion = completionIndicators.some(indicator => messageStr.includes(indicator));
+            
+            if (foundCompletion) {
+              console.log("✅ DETECTED COMPLETION PHRASE in experimental message");
+              logClientEvent("✅ Agent indicated interview completion");
+              
+              setTimeout(() => {
+                if (uiState === 'interviewing' && isInterviewActive) {
+                  console.log("🔚 Auto-ending interview due to completion phrase");
+                  handleEndInterview();
+                }
+              }, 3000);
+              return;
+            }
+          }
+        } catch (err) {
+          console.error("❌ Error processing experimental message:", err);
+        }
+      };
+
+      // Agent message handler (backup detection)
       const handleAgentMessage = (event: any) => {
         try {
           const message = event?.data || event;
-          console.log("Agent message received:", message);
+          console.log("🤖 Agent message received:", message);
 
-          // Check if conversation should end
-          if (shouldEndConversation(message)) {
-            console.log("Detected conversation end signal");
-            setTimeout(() => {
-              if (uiState === 'interviewing') {
-                handleEndInterview();
-              }
-            }, 1000);
-          }
-
-          // Process transcript if available
+          // Add to transcript if it has text
           if (message && message.text && message.isFinal) {
             const utterance = {
               speaker: 'agent',
@@ -259,17 +323,26 @@ export default function MedicalIntakePage() {
               return [...prev, utterance];
             });
           }
+
+          // Backup end detection
+          if (shouldEndConversation(message)) {
+            console.log("🔚 Detected conversation end signal from agent message (backup)");
+            setTimeout(() => {
+              if (uiState === 'interviewing') {
+                handleEndInterview();
+              }
+            }, 2000);
+          }
         } catch (err) {
-          console.error("Error processing agent message:", err);
+          console.error("❌ Error processing agent message:", err);
         }
       };
 
       // Error handler
       const handleError = (event: any) => {
         const errorObj = event?.error || event;
-        console.error("Ultravox error:", errorObj);
+        console.error("❌ Ultravox error:", errorObj);
         
-        // Don't show error UI if we're already in a different state
         if (uiState === 'interviewing' || uiState === 'initiating') {
           toast({
             title: "Interview Error",
@@ -280,35 +353,36 @@ export default function MedicalIntakePage() {
         }
       };
 
-      // Set up event listeners
-      if (typeof session.addEventListener === 'function') {
-        // Remove any existing listeners first to prevent duplicates
+      // Set up ALL event listeners
+      const eventListeners = [
+        { event: 'status', handler: handleStatusChange },
+        { event: 'transcripts', handler: handleTranscript },
+        { event: 'experimental_message', handler: handleExperimentalMessage }, // 🔑 CRITICAL
+        { event: 'agentMessage', handler: handleAgentMessage },
+        { event: 'error', handler: handleError }
+      ];
+
+      // Clean up any existing listeners
+      eventListeners.forEach(({ event, handler }) => {
         try {
-          session.removeEventListener('status', handleStatusChange);
-          session.removeEventListener('transcripts', handleTranscript);
-          session.removeEventListener('agentMessage', handleAgentMessage);
-          session.removeEventListener('error', handleError);
+          session.removeEventListener(event, handler);
         } catch (e) {
-          console.log("No previous listeners to remove");
+          // Ignore - no existing listeners
         }
-        
-        // Add new listeners
-        session.addEventListener('status', handleStatusChange);
-        session.addEventListener('transcripts', handleTranscript);
-        session.addEventListener('agentMessage', handleAgentMessage);
-        session.addEventListener('error', handleError);
-        
-        console.log("All event listeners attached successfully");
-      } else {
-        console.warn("addEventListener is not a function on session");
-      }
+      });
 
-      console.log("Joining Ultravox call with URL:", joinUrl.substring(0, 20) + "...");
+      // Add new listeners
+      eventListeners.forEach(({ event, handler }) => {
+        session.addEventListener(event, handler);
+        console.log(`✅ Added event listener for: ${event}`);
+      });
+
+      console.log("🔗 Joining Ultravox call...");
       await session.joinCall(joinUrl);
-      console.log("Successfully joined Ultravox call");
-      logClientEvent("Successfully joined Ultravox call - transitioning to interviewing state");
+      console.log("✅ Successfully joined Ultravox call");
+      logClientEvent("Successfully joined Ultravox call");
 
-      // Set interviewing state immediately after successful join
+      // Set interviewing state
       setUiState('interviewing');
       setIsInterviewActive(true);
 
@@ -316,20 +390,15 @@ export default function MedicalIntakePage() {
       try {
         if (typeof session.unmuteMic === 'function') {
           session.unmuteMic();
-          console.log("Microphone unmuted");
-        } else if (typeof (session as any).unmuteMicrophone === 'function') {
-          (session as any).unmuteMicrophone();
-          console.log("Microphone unmuted (alternate method)");
-        } else {
-          console.warn("No unmute method found on session");
+          console.log("🎤 Microphone unmuted");
         }
       } catch (micError) {
-        console.error("Error unmuting microphone:", micError);
+        console.error("❌ Error unmuting microphone:", micError);
       }
 
       return true;
     } catch (error: any) {
-      console.error("Error initializing Ultravox session:", error);
+      console.error("❌ Error initializing Ultravox session:", error);
       toast({
         title: "Connection Error",
         description: error?.message || "Could not connect to the interview service. Please try again.",
@@ -421,40 +490,43 @@ export default function MedicalIntakePage() {
 
   const handleEndInterview = async () => {
     if (uiState === 'processing_transcript' || uiState === 'displaying_results') {
-      console.log("Already processing or displaying results. Ignoring duplicate call.");
+      console.log("⚠️ Already processing or displaying results. Ignoring duplicate call.");
       return;
     }
 
-    console.log("Ending interview");
+    console.log("🔚 ENDING INTERVIEW - Starting transcript submission to Cloud Run");
+    logClientEvent("Ending interview and preparing transcript for Cloud Run backend");
     setIsInterviewActive(false);
 
-    // Leave Ultravox call
+    // Leave Ultravox call first
     try {
       if (uvSession && typeof uvSession.leaveCall === 'function') {
+        console.log("📞 Calling uvSession.leaveCall()...");
         await uvSession.leaveCall();
-        console.log("Successfully left Ultravox call");
+        console.log("✅ Successfully left Ultravox call");
       }
     } catch (error) {
-      console.error("Error leaving Ultravox call:", error);
+      console.error("❌ Error leaving Ultravox call:", error);
     }
 
-    // Log transcript information
-    console.log(`Current transcript length: ${currentTranscript.length}`);
+    // Wait for any final transcript events
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Debug current transcript state
+    console.log(`📊 Current transcript length: ${currentTranscript.length}`);
     if (currentTranscript.length > 0) {
-      console.log("Transcript samples:");
+      console.log("📝 Transcript preview:");
       currentTranscript.slice(0, 3).forEach((item, index) => {
-        console.log(`Transcript ${index}: ${item.speaker}: "${item.text.substring(0, 50)}..."`);
+        console.log(`  ${index + 1}. ${item.speaker}: "${item.text.substring(0, 50)}..."`); 
       });
-    }
-
-    // Process transcript if we have data
-    if (currentTranscript.length > 0) {
-      console.log("Processing transcript data");
+      
+      console.log("🚀 SENDING TRANSCRIPT TO CLOUD RUN BACKEND");
+      console.log(`🏁 Target: ${API_BASE_URL}/api/v1/submit-transcript`);
       await assembleAndSubmitTranscript();
     } else {
-      // Check if we can get transcripts directly from the session as a fallback
+      // Try session fallback
       if (uvSession && uvSession.transcripts && Array.isArray(uvSession.transcripts) && uvSession.transcripts.length > 0) {
-        console.log("No transcript in state, but found transcripts in session. Using those instead.");
+        console.log("📝 Using session transcripts as fallback");
         const sessionTranscripts = uvSession.transcripts
           .filter((t: any) => t && t.text && typeof t.text === 'string')
           .map((t: any) => ({
@@ -464,15 +536,16 @@ export default function MedicalIntakePage() {
           
         if (sessionTranscripts.length > 0) {
           setCurrentTranscript(sessionTranscripts);
+          console.log("🚀 SENDING SESSION TRANSCRIPT TO CLOUD RUN");
           await assembleAndSubmitTranscript();
           return;
         }
       }
       
-      console.log("No transcript data to process");
+      console.log("❌ No transcript data found");
       toast({
         title: "Interview Ended",
-        description: "No conversation data was recorded."
+        description: "No conversation data was recorded. Please try starting a new interview."
       });
       setUiState('idle');
     }
