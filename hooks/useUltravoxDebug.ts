@@ -10,7 +10,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { UltravoxDebugState } from '@/lib/debug-types';
 import { checkBrowserCompatibility } from '@/lib/browser-compat';
-import { testNetworkConnectivity } from '@/lib/network-utils';
+import { testNetworkConnectivity } from '@/utils/network-utils';
 
 /**
  * Hook for Ultravox session debugging functionality

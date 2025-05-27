@@ -20,7 +20,7 @@ import { BackendService } from "@/lib/backend-service";
 import { ErrorHandler } from "@/lib/error-handler";
 import { TranscriptService } from "@/lib/transcript-service";
 import { checkBrowserCompatibility, checkMicrophonePermissions } from "@/lib/browser-compat";
-import { setupNetworkListeners } from "@/lib/network-utils";
+import { setupNetworkListeners } from "@/utils/network-utils";
 import { UI_STATES } from "@/lib/config";
 import { Utterance, SummaryData } from "@/lib/types"; // Import types
 import DevTray from "@/components/DevTray";

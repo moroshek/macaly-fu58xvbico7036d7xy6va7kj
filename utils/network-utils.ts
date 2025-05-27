@@ -200,9 +200,6 @@ export function checkEnhancedBrowserCompatibility(): EnhancedCompatibilityResult
     mediaDevices: typeof navigator !== 'undefined' && !!navigator.mediaDevices,
     webSockets: typeof window !== 'undefined' && !!window.WebSocket,
     webAudio: typeof window !== 'undefined' && (!!(window as any).AudioContext || !!(window as any).webkitAudioContext),
-    permissions: false,
-    webRTC: false,
-    localStorage: false,
     permissions: typeof navigator !== 'undefined' && !!navigator.permissions,
     webRTC: typeof window !== 'undefined' && (!!(window as any).RTCPeerConnection || !!(window as any).webkitRTCPeerConnection),
     localStorage: typeof window !== 'undefined' && !!window.localStorage,
@@ -256,6 +253,7 @@ export function checkEnhancedBrowserCompatibility(): EnhancedCompatibilityResult
   if (userAgent.includes('Chrome') && userAgent.includes('Mobile')) {
     recommendations.push("Chrome mobile has excellent support for this application");
   }
+  } // Closing brace for 'if (typeof navigator !== 'undefined')'
 
   return {
     compatible: criticalIssues.length === 0,
