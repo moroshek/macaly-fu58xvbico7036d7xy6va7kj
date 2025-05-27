@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import Link from "next/link";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Shield, Lock, Mic, X, Loader2, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,12 +11,10 @@ import DevTray from "@/components/DevTray";
 import VoiceActivityIndicator from "@/components/VoiceActivityIndicator";
 
 // Import utility modules
-import { debugUltravoxState, testWebSocketConnection, shouldEndConversation, debugAudioState } from "@/lib/ultravox-debug";
+import { debugUltravoxState, testWebSocketConnection, debugAudioState } from "@/lib/ultravox-debug";
 import { testNetworkConnectivity, checkApiConnectivity, setupNetworkListeners } from "@/lib/network-utils";
 import { checkBrowserCompatibility, checkMicrophonePermissions } from "@/lib/browser-compat";
-import useUltravoxDebug from "@/hooks/useUltravoxDebug";
 
-// Configure axios with retries
 axios.defaults.timeout = 30000;
 
 export type Utterance = {
@@ -36,7 +33,6 @@ export type SummaryData = {
   [key: string]: string | null | undefined;
 };
 
-// Your correct Cloud Run URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_API_URL ||
   'https://ai-medical-intake-service-191450583446.us-central1.run.app';
 
@@ -76,130 +72,193 @@ export default function MedicalIntakePage() {
   const { toast } = useToast();
   const pendingRequestsRef = useRef<number>(0);
 
-  // Use imported microphone permission check utility directly
-
-  // Using the imported shouldEndConversation function from ultravox-debug.ts
-  // No local implementation needed as we're importing the function directly
-
-  // Use imported API connectivity check utility directly
-
+  // Network setup
   useEffect(() => {
     setIsOnline(navigator.onLine);
-
-    // Use the imported utility to set up network listeners
     const cleanup = setupNetworkListeners(
-      // Set online status
-      (online) => {
-        setIsOnline(online);
-      },
-      // Online callback
+      (online) => setIsOnline(online),
       async () => {
-        logClientEvent('Network connection restored');
         try {
-          logClientEvent('Testing API connectivity');
+          logClientEvent('Network connection restored');
           const result = await checkApiConnectivity(API_BASE_URL);
-          if (!isOnline && result.success) setIsOnline(true);
-          logApiCall('Backend', 'GET /health', result.success ? 'success' : 'failed', result.status);
+          if (result.success) {
+            setIsOnline(true);
+            logApiCall('Backend', 'GET /health', 'success', result.status);
+          }
         } catch (error) {
           console.warn('API connectivity test failed:', error);
           logClientEvent(`API connectivity test failed: ${error}`);
           logApiCall('Backend', 'GET /health', 'failed');
-          setIsOnline(false);
         }
       },
-      // Offline callback
-      () => {
-        logClientEvent('Network connection lost');
-      }
+      () => logClientEvent('Network connection lost')
     );
 
-    // Initial connectivity check
     if (navigator.onLine) {
-      // Check API connectivity
       checkApiConnectivity(API_BASE_URL)
         .then(result => {
-          if (!isOnline && result.success) setIsOnline(true);
+          if (result.success) setIsOnline(true);
           logApiCall('Backend', 'GET /health', result.success ? 'success' : 'failed', result.status);
         })
         .catch(error => {
-          console.warn('API connectivity test failed:', error);
-          logClientEvent(`API connectivity test failed: ${error}`);
+          console.warn('Initial API connectivity test failed:', error);
+          logClientEvent(`Initial API connectivity test failed: ${error}`);
           logApiCall('Backend', 'GET /health', 'failed');
-          setIsOnline(false);
         });
     }
 
     return cleanup;
   }, []);
 
-  // Cleanup on unmount
+  // CRITICAL FIX: Ultravox event handlers with proper state access
   useEffect(() => {
-    return () => {
-      if (uvSession) {
-        try {
-          console.log("Cleaning up Ultravox session on unmount");
-          uvSession.leaveCall();
-        } catch (error) {
-          console.error("Error cleaning up Ultravox session:", error);
+    if (!uvSession) return;
+
+    console.log("🔧 Setting up Ultravox event handlers with current state access");
+
+    const handleStatusChange = (event: any) => {
+      const status = typeof event === 'string' ? event :
+        event?.data || event?.status || uvSession.status || 'unknown';
+
+      logClientEvent(`Ultravox status: ${status}`);
+      setUvStatus(status);
+
+      const activeStates = ['idle', 'listening', 'thinking', 'speaking', 'connected', 'ready'];
+
+      if (status === 'disconnected') {
+        console.log("🔌 Ultravox session disconnected");
+        setIsInterviewActive(false);
+
+        // Check current state values using functional updates
+        setUiState(currentUiState => {
+          setCurrentTranscript(currentTranscriptState => {
+            if (currentUiState !== 'processing_transcript' &&
+              currentUiState !== 'displaying_results' &&
+              currentTranscriptState.length > 0) {
+              console.log("📤 Auto-submitting transcript after disconnection");
+              setTimeout(() => assembleAndSubmitTranscript(), 500);
+            } else if (currentTranscriptState.length === 0) {
+              setUiState('idle');
+            }
+            return currentTranscriptState;
+          });
+          return currentUiState;
+        });
+      } else if (activeStates.includes(status.toLowerCase())) {
+        setUiState('interviewing');
+        setIsInterviewActive(true);
+      }
+    };
+
+    const handleExperimentalMessage = (event: any) => {
+      try {
+        const message = event?.data || event;
+        console.log("🔧 Experimental message received:", message);
+
+        if (message && typeof message === 'object') {
+          const messageStr = JSON.stringify(message).toLowerCase();
+
+          const hangupIndicators = [
+            'hangup', 'hang_up', 'hang-up',
+            '"toolname":"hangup"', '"name":"hangup"',
+            '"tool_name":"hangup"', '"function":"hangup"'
+          ];
+
+          const foundHangup = hangupIndicators.some(indicator => messageStr.includes(indicator));
+
+          if (foundHangup) {
+            console.log("🚨 DETECTED HANGUP TOOL CALL - Agent wants to end call!");
+            logClientEvent("🚨 Agent invoked hangUp tool - ending interview automatically");
+
+            setTimeout(() => {
+              setUiState(currentUiState => {
+                setIsInterviewActive(currentActiveState => {
+                  if (currentUiState === 'interviewing' && currentActiveState) {
+                    console.log("🔚 Auto-ending interview due to hangUp tool call");
+                    handleEndInterview();
+                  }
+                  return currentActiveState;
+                });
+                return currentUiState;
+              });
+            }, 2000);
+            return;
+          }
+
+          const completionIndicators = [
+            'interview complete', 'interview is complete',
+            'thank you for completing', 'that concludes',
+            'all done', 'finished with questions'
+          ];
+
+          const foundCompletion = completionIndicators.some(indicator => messageStr.includes(indicator));
+
+          if (foundCompletion) {
+            console.log("✅ DETECTED COMPLETION PHRASE in experimental message");
+            logClientEvent("✅ Agent indicated interview completion");
+
+            setTimeout(() => {
+              setUiState(currentUiState => {
+                setIsInterviewActive(currentActiveState => {
+                  if (currentUiState === 'interviewing' && currentActiveState) {
+                    console.log("🔚 Auto-ending interview due to completion phrase");
+                    handleEndInterview();
+                  }
+                  return currentActiveState;
+                });
+                return currentUiState;
+              });
+            }, 3000);
+          }
         }
+      } catch (err) {
+        console.error("❌ Error processing experimental message:", err);
+      }
+    };
+
+    try {
+      uvSession.addEventListener('status', handleStatusChange);
+      uvSession.addEventListener('experimental_message', handleExperimentalMessage);
+      console.log("✅ Ultravox event listeners added successfully");
+    } catch (error) {
+      console.error("❌ Error adding Ultravox event listeners:", error);
+    }
+
+    return () => {
+      try {
+        uvSession.removeEventListener('status', handleStatusChange);
+        uvSession.removeEventListener('experimental_message', handleExperimentalMessage);
+        console.log("🧹 Ultravox event listeners cleaned up");
+      } catch (error) {
+        console.error("❌ Error removing Ultravox event listeners:", error);
       }
     };
   }, [uvSession]);
 
-  // Using imported testWebSocketConnection and testNetworkConnectivity functions
-  // No local implementation needed
-
-  // Use imported browser compatibility check utility directly
-
+  // Simplified session initialization
   const initUltravoxSession = async (joinUrl: string) => {
     try {
       logClientEvent("Starting Ultravox initialization");
-      
-      // Test if UltravoxSession is available
+
       if (typeof UltravoxSession !== 'function') {
         throw new Error("UltravoxSession is not available - check import");
       }
-      
-      // Test WebSocket connectivity using the imported utility
-      const wsTestResult = await testWebSocketConnection(joinUrl);
-      if (!wsTestResult) {
-        logClientEvent("WebSocket connectivity test failed");
+
+      try {
+        const wsTestResult = await testWebSocketConnection(joinUrl);
+        if (!wsTestResult) {
+          logClientEvent("WebSocket connectivity test failed");
+        }
+      } catch (wsError) {
+        console.warn("WebSocket test failed but continuing:", wsError);
+        logClientEvent(`WebSocket test failed: ${wsError}`);
       }
 
       logClientEvent("Initializing Ultravox session");
 
-      // Create session with proper configuration
       const session = new UltravoxSession({
-        experimentalMessages: true as any  // ✅ CRITICAL: Must be boolean - use type assertion for compatibility
+        experimentalMessages: true as any
       });
-      setUvSession(session);
-
-      // Status change handler
-      const handleStatusChange = (event: any) => {
-        const status = typeof event === 'string' ? event :
-          event?.data || event?.status || session.status || 'unknown';
-
-        logClientEvent(`Ultravox status: ${status}`);
-        setUvStatus(status);
-
-        const activeStates = ['idle', 'listening', 'thinking', 'speaking', 'connected', 'ready'];
-
-        if (status === 'disconnected') {
-          console.log("🔌 Ultravox session disconnected");
-          setIsInterviewActive(false);
-
-          // Auto-submit transcript if we have data and aren't already processing
-          if (uiState !== 'processing_transcript' && uiState !== 'displaying_results' && currentTranscript.length > 0) {
-            console.log("📤 Auto-submitting transcript after disconnection");
-            setTimeout(() => assembleAndSubmitTranscript(), 500);
-          } else if (currentTranscript.length === 0) {
-            setUiState('idle');
-          }
-        } else if (activeStates.includes(status.toLowerCase())) {
-          setUiState('interviewing');
-          setIsInterviewActive(true);
-        }
-      };
 
       // Enhanced transcript handler
       const handleTranscript = (event: any) => {
@@ -207,144 +266,48 @@ export default function MedicalIntakePage() {
           console.log("📝 Transcript event received:", event);
 
           if (session.transcripts && Array.isArray(session.transcripts)) {
-            const processedCount = currentTranscript.length;
-            const newTranscripts = session.transcripts.slice(processedCount).filter((transcript: any) => {
-              return transcript &&
-                typeof transcript.text === 'string' &&
-                transcript.text.trim() !== '' &&
-                transcript.isFinal !== false;
-            });
-
-            console.log(`📝 Found ${newTranscripts.length} new transcripts to process`);
-
-            if (newTranscripts.length > 0) {
-              newTranscripts.forEach((transcript: any) => {
-                const speaker = transcript.speaker === 'user' ? 'user' : 'agent';
-                const utterance = { speaker, text: transcript.text.trim() };
-
-                console.log(`➕ Adding transcript: ${speaker}: ${utterance.text.substring(0, 50)}...`);
-
-                setCurrentTranscript(prev => {
-                  const exists = prev.some(u => u.speaker === speaker && u.text === utterance.text);
-                  if (exists) return prev;
-                  return [...prev, utterance];
-                });
+            setCurrentTranscript(prev => {
+              const newTranscripts = session.transcripts.filter((transcript: any) => {
+                return transcript &&
+                  typeof transcript.text === 'string' &&
+                  transcript.text.trim() !== '' &&
+                  transcript.isFinal !== false;
               });
-            }
+
+              if (newTranscripts.length > prev.length) {
+                console.log(`📝 Found ${newTranscripts.length - prev.length} new transcripts`);
+                return newTranscripts.map((transcript: any) => ({
+                  speaker: transcript.speaker === 'user' ? 'user' : 'agent',
+                  text: transcript.text.trim()
+                }));
+              }
+              return prev;
+            });
           }
         } catch (err) {
           console.error("❌ Error processing transcript:", err);
         }
       };
 
-      // CRITICAL: Tool call detection via experimental messages
-      const handleExperimentalMessage = (event: any) => {
-        try {
-          const message = event?.data || event;
-          console.log("🔧 Experimental message received:", message);
-
-          if (message && typeof message === 'object') {
-            const messageStr = JSON.stringify(message).toLowerCase();
-
-            // Check for hangUp tool calls (multiple possible formats)
-            const hangupIndicators = [
-              'hangup', 'hang_up', 'hang-up',
-              '"toolname":"hangup"', '"name":"hangup"',
-              '"tool_name":"hangup"', '"function":"hangup"'
-            ];
-
-            const foundHangup = hangupIndicators.some(indicator => messageStr.includes(indicator));
-
-            if (foundHangup) {
-              console.log("🚨 DETECTED HANGUP TOOL CALL - Agent wants to end call!");
-              logClientEvent("🚨 Agent invoked hangUp tool - ending interview automatically");
-
-              // End the interview after a delay to let final audio play
-              setTimeout(() => {
-                if (uiState === 'interviewing' && isInterviewActive) {
-                  console.log("🔚 Auto-ending interview due to hangUp tool call");
-                  handleEndInterview();
-                }
-              }, 2000);
-              return;
-            }
-
-            // Check for completion phrases in experimental messages
-            const completionIndicators = [
-              'interview complete', 'interview is complete',
-              'thank you for completing', 'that concludes',
-              'all done', 'finished with questions'
-            ];
-
-            const foundCompletion = completionIndicators.some(indicator => messageStr.includes(indicator));
-
-            if (foundCompletion) {
-              console.log("✅ DETECTED COMPLETION PHRASE in experimental message");
-              logClientEvent("✅ Agent indicated interview completion");
-
-              setTimeout(() => {
-                if (uiState === 'interviewing' && isInterviewActive) {
-                  console.log("🔚 Auto-ending interview due to completion phrase");
-                  handleEndInterview();
-                }
-              }, 3000);
-              return;
-            }
-          }
-        } catch (err) {
-          console.error("❌ Error processing experimental message:", err);
-        }
-      };
-
-      // Error handler
       const handleError = (event: any) => {
         const errorObj = event?.error || event;
         console.error("❌ Ultravox error:", errorObj);
-
-        if (uiState === 'interviewing' || uiState === 'initiating') {
-          setErrorMessage(errorObj?.message || "There was a problem with the interview. Please try again.");
-          toast({
-            title: "Interview Error",
-            description: errorObj?.message || "There was a problem with the interview. Please try again.",
-            variant: "destructive"
-          });
-          setUiState('error');
-        }
+        setErrorMessage(errorObj?.message || "There was a problem with the interview connection.");
+        setUiState('error');
       };
 
-      // Set up ALL event listeners
-      const eventListeners = [
-        { event: 'status', handler: handleStatusChange },
-        { event: 'transcripts', handler: handleTranscript },
-        { event: 'experimental_message', handler: handleExperimentalMessage }, // 🔑 CRITICAL
-        { event: 'error', handler: handleError }
-      ];
-
-      // Clean up any existing listeners
-      eventListeners.forEach(({ event, handler }) => {
-        try {
-          session.removeEventListener(event, handler);
-        } catch (e) {
-          // Ignore - no existing listeners
-        }
-      });
-
-      // Add new listeners
-      eventListeners.forEach(({ event, handler }) => {
-        session.addEventListener(event, handler);
-        console.log(`✅ Added event listener for: ${event}`);
-      });
+      session.addEventListener('transcripts', handleTranscript);
+      session.addEventListener('error', handleError);
 
       console.log("🔗 Joining Ultravox call...");
       await session.joinCall(joinUrl);
       console.log("✅ Successfully joined Ultravox call");
       logClientEvent("Successfully joined Ultravox call");
 
-      // Set interviewing state
+      setUvSession(session);
       setUiState('interviewing');
       setIsInterviewActive(true);
 
-      // Unmute microphone
       try {
         if (typeof session.unmuteMic === 'function') {
           session.unmuteMic();
@@ -369,13 +332,11 @@ export default function MedicalIntakePage() {
   };
 
   const handleStartInterview = async () => {
-    // Reset previous data
     setSummaryData(null);
     setAnalysisData(null);
     setCurrentTranscript([]);
     setErrorMessage("");
 
-    // Check for internet connection first
     if (!navigator.onLine) {
       setErrorMessage("No internet connection. Please check your connection and try again.");
       toast({
@@ -385,57 +346,70 @@ export default function MedicalIntakePage() {
       });
       return;
     }
-    
-    // Check browser compatibility using the imported utility directly
-    const browserCompatibility = checkBrowserCompatibility();
-    if (!browserCompatibility.compatible) {
-      logClientEvent(`Browser compatibility issues: ${browserCompatibility.issues.join(', ')}`);
 
-      setErrorMessage("Your browser doesn't support all required features. Please try a modern browser like Chrome, Edge, or Safari.");
-      toast({
-        title: "Browser Compatibility Issue",
-        description: "Your browser doesn't support all required features. Please try a modern browser.",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    // Test network connectivity to key services
-    logClientEvent("Testing network connectivity to required services");
-    const networkOk = await testNetworkConnectivity();
-    if (!networkOk) {
-      setErrorMessage("Cannot reach required services. Please check your internet connection or try again later.");
-      toast({
-        title: "Network Connectivity Issue",
-        description: "Cannot reach required services. Please check your connection or try again later.",
-        variant: "destructive"
-      });
-      return;
+    try {
+      const browserCompatibility = checkBrowserCompatibility();
+      if (!browserCompatibility.compatible) {
+        logClientEvent(`Browser compatibility issues: ${browserCompatibility.issues.join(', ')}`);
+        setErrorMessage("Your browser doesn't support all required features. Please try a modern browser like Chrome, Edge, or Safari.");
+        toast({
+          title: "Browser Compatibility Issue",
+          description: "Your browser doesn't support all required features. Please try a modern browser.",
+          variant: "destructive"
+        });
+        return;
+      }
+    } catch (error) {
+      console.warn("Browser compatibility check failed:", error);
+      logClientEvent(`Browser compatibility check failed: ${error}`);
     }
 
     try {
-      // First, request microphone permissions
+      logClientEvent("Testing network connectivity to required services");
+      const networkOk = await testNetworkConnectivity();
+      if (!networkOk) {
+        setErrorMessage("Cannot reach required services. Please check your internet connection or try again later.");
+        toast({
+          title: "Network Connectivity Issue",
+          description: "Cannot reach required services. Please check your connection or try again later.",
+          variant: "destructive"
+        });
+        return;
+      }
+    } catch (error) {
+      console.warn("Network connectivity test failed:", error);
+      logClientEvent(`Network connectivity test failed: ${error}`);
+    }
+
+    try {
       setUiState('requesting_permissions');
       logClientEvent("Requesting microphone permissions");
 
-      // Use the imported utility function
       const result = await checkMicrophonePermissions();
-      const hasPermission = result.granted;
-      
+
+      let hasPermission = false;
+      let errorMsg = "Microphone access denied";
+
+      if (typeof result === 'boolean') {
+        hasPermission = result;
+      } else if (result && typeof result === 'object') {
+        hasPermission = Boolean(result.granted);
+        if (result.error) {
+          errorMsg = result.error;
+        }
+      }
+
       if (hasPermission) {
         setHasAudioPermission(true);
         logClientEvent("Microphone permission granted");
       } else {
         setHasAudioPermission(false);
-        const errorMsg = result.error || "Microphone access denied";
         setErrorMessage(errorMsg);
         logClientEvent(`Microphone permission error: ${errorMsg}`);
-      }
-      if (!hasPermission) {
         setUiState('error');
         toast({
           title: "Microphone Access Required",
-          description: errorMessage || "Microphone access is required for the interview. Please grant permission.",
+          description: errorMsg,
           variant: "destructive"
         });
         return;
@@ -446,59 +420,65 @@ export default function MedicalIntakePage() {
 
       pendingRequestsRef.current++;
 
-      logClientEvent("Calling initiate-intake API");
-      const response = await axios.post(`${API_BASE_URL}/api/v1/initiate-intake`, {});
-      logApiCall('Backend', 'POST /api/v1/initiate-intake', 'success', response.status);
+      try {
+        logClientEvent("Calling initiate-intake API");
+        const response = await axios.post(`${API_BASE_URL}/api/v1/initiate-intake`, {});
+        logApiCall('Backend', 'POST /api/v1/initiate-intake', 'success', response.status);
 
-      const { joinUrl, callId: newCallId } = response.data;
-      if (!joinUrl || !newCallId) {
-        logClientEvent("Invalid response - missing joinUrl or callId");
-        throw new Error("Invalid response from server. Missing joinUrl or callId.");
+        const { joinUrl, callId: newCallId } = response.data;
+        if (!joinUrl || !newCallId) {
+          logClientEvent("Invalid response - missing joinUrl or callId");
+          throw new Error("Invalid response from server. Missing joinUrl or callId.");
+        }
+
+        setCallId(newCallId);
+        logClientEvent(`Call ID received: ${newCallId.substring(0, 8)}...`);
+
+        const success = await initUltravoxSession(joinUrl);
+        if (!success) {
+          logClientEvent("Failed to initialize Ultravox session");
+          throw new Error("Failed to initialize interview session.");
+        }
+
+        logClientEvent("Interview started successfully");
+      } catch (apiError) {
+        console.error("Error with API or session:", apiError);
+        logClientEvent(`API/session error: ${apiError instanceof Error ? apiError.message : 'Unknown error'}`);
+
+        let errorMessage = "An unexpected error occurred. Please try again.";
+        if (apiError instanceof Error && apiError.message) {
+          errorMessage = apiError.message;
+        } else if (axios.isAxiosError(apiError)) {
+          if (!apiError.response) {
+            errorMessage = "Could not connect to the server. Please check your internet connection.";
+          } else {
+            errorMessage = `Server error (${apiError.response.status}). Please try again later.`;
+          }
+          logApiCall('Backend', 'POST /api/v1/initiate-intake', 'failed', apiError.response?.status);
+        }
+
+        setErrorMessage(errorMessage);
+        toast({
+          title: "Interview Error",
+          description: errorMessage,
+          variant: "destructive"
+        });
+        setUiState('error');
+      } finally {
+        pendingRequestsRef.current = Math.max(0, pendingRequestsRef.current - 1);
       }
-      
-      // Test WebSocket connectivity before initializing Ultravox
-      logClientEvent("Testing WebSocket connectivity to Ultravox");
-      testWebSocketConnection(joinUrl);
-      
-      // Test network connectivity again right before initializing session
-      logClientEvent("Final network connectivity check before session initialization");
-      await testNetworkConnectivity();
 
-      setCallId(newCallId);
-      logClientEvent(`Call ID received: ${newCallId.substring(0, 8)}...`);
-
-      const success = await initUltravoxSession(joinUrl);
-      if (!success) {
-        logClientEvent("Failed to initialize Ultravox session");
-        throw new Error("Failed to initialize interview session.");
-      }
-
-      logClientEvent("Interview started successfully");
     } catch (error: any) {
       console.error("Error starting interview:", error);
       logClientEvent(`Error starting interview: ${error.message || 'Unknown error'}`);
 
-      let errorMessage = "An unexpected error occurred. Please try again.";
-      if (error.message) {
-        errorMessage = error.message;
-      } else if (axios.isAxiosError(error)) {
-        if (!error.response) {
-          errorMessage = "Could not connect to the server. Please check your internet connection.";
-        } else {
-          errorMessage = `Server error (${error.response.status}). Please try again later.`;
-        }
-        logApiCall('Backend', 'POST /api/v1/initiate-intake', 'failed', error.response?.status);
-      }
-
-      setErrorMessage(errorMessage);
+      setErrorMessage("Failed to start interview. Please try again.");
       toast({
         title: "Interview Error",
-        description: errorMessage,
+        description: "Failed to start interview. Please try again.",
         variant: "destructive"
       });
       setUiState('error');
-    } finally {
-      pendingRequestsRef.current = Math.max(0, pendingRequestsRef.current - 1);
     }
   };
 
@@ -512,7 +492,6 @@ export default function MedicalIntakePage() {
     logClientEvent("Ending interview and preparing transcript for Cloud Run backend");
     setIsInterviewActive(false);
 
-    // Leave Ultravox call first
     try {
       if (uvSession && typeof uvSession.leaveCall === 'function') {
         console.log("📞 Calling uvSession.leaveCall()...");
@@ -523,10 +502,8 @@ export default function MedicalIntakePage() {
       console.error("❌ Error leaving Ultravox call:", error);
     }
 
-    // Wait for any final transcript events
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Debug current transcript state
     console.log(`📊 Current transcript length: ${currentTranscript.length}`);
     if (currentTranscript.length > 0) {
       console.log("📝 Transcript preview:");
@@ -538,7 +515,6 @@ export default function MedicalIntakePage() {
       console.log(`🏁 Target: ${API_BASE_URL}/api/v1/submit-transcript`);
       await assembleAndSubmitTranscript();
     } else {
-      // Try session fallback
       if (uvSession && uvSession.transcripts && Array.isArray(uvSession.transcripts) && uvSession.transcripts.length > 0) {
         console.log("📝 Using session transcripts as fallback");
         const sessionTranscripts = uvSession.transcripts
@@ -567,14 +543,27 @@ export default function MedicalIntakePage() {
   };
 
   const assembleAndSubmitTranscript = async () => {
+    if (uiState === 'processing_transcript' || uiState === 'displaying_results') {
+      console.log("⚠️ Already processing transcript, ignoring duplicate call");
+      return;
+    }
+
     logClientEvent("Starting transcript submission");
 
     setSummaryData(null);
     setAnalysisData(null);
     setUiState('processing_transcript');
 
-    if (currentTranscript.length === 0) {
-      logClientEvent("No transcript data to submit");
+    const validTranscript = currentTranscript.filter(utterance => {
+      return utterance &&
+        typeof utterance.speaker === 'string' &&
+        typeof utterance.text === 'string' &&
+        utterance.text.trim().length > 0 &&
+        (utterance.speaker === 'user' || utterance.speaker === 'agent');
+    });
+
+    if (validTranscript.length === 0) {
+      logClientEvent("No valid transcript data to submit");
       setErrorMessage("No conversation data was recorded.");
       toast({
         title: "Missing Data",
@@ -585,8 +574,8 @@ export default function MedicalIntakePage() {
       return;
     }
 
-    if (!callId) {
-      logClientEvent("Missing call ID");
+    if (!callId || callId.trim().length === 0) {
+      logClientEvent("Missing or invalid call ID");
       setErrorMessage("Missing call identifier.");
       toast({
         title: "Missing Identifier",
@@ -598,38 +587,76 @@ export default function MedicalIntakePage() {
     }
 
     try {
-      const fullTranscript = currentTranscript.map(utterance =>
-        `${utterance.speaker === 'agent' ? 'Agent' : 'User'}: ${utterance.text}`
-      ).join('\n');
+      const fullTranscript = validTranscript.map(utterance => {
+        const speakerLabel = utterance.speaker === 'agent' ? 'Agent' : 'User';
+        return `${speakerLabel}: ${utterance.text.trim()}`;
+      }).join('\n');
 
-      logClientEvent(`Submitting transcript (${fullTranscript.length} chars)`);
-      logClientEvent(`First 200 chars of transcript: ${fullTranscript.substring(0, 200)}...`);
+      if (fullTranscript.length < 10) {
+        logClientEvent("Transcript too short to be meaningful");
+        setErrorMessage("Conversation too short to process. Please have a longer conversation.");
+        toast({
+          title: "Insufficient Data",
+          description: "Conversation too short to process. Please have a longer conversation.",
+          variant: "destructive"
+        });
+        setUiState('error');
+        return;
+      }
+
+      logClientEvent(`Submitting transcript (${fullTranscript.length} chars, ${validTranscript.length} utterances)`);
+      logClientEvent(`Transcript preview: ${fullTranscript.substring(0, 200)}...`);
 
       pendingRequestsRef.current++;
 
-      const payload = { callId: callId, transcript: fullTranscript };
-      logClientEvent("Preparing POST request payload");
+      const payload = {
+        callId: callId.trim(),
+        transcript: fullTranscript
+      };
 
+      logClientEvent("Sending POST request to submit-transcript endpoint");
       logApiCall('Backend', 'POST /api/v1/submit-transcript', 'pending');
+
       const response = await axios.post(
         `${API_BASE_URL}/api/v1/submit-transcript`,
         payload,
         {
-          timeout: 60000,
-          headers: { 'Content-Type': 'application/json' }
+          timeout: 120000,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Request-ID': `${callId}-${Date.now()}`
+          }
         }
       );
+
       logApiCall('Backend', 'POST /api/v1/submit-transcript', 'success', response.status);
+      logClientEvent(`Backend response received: ${response.status}`);
 
-      logClientEvent(`API response received: ${response.status}`);
-      const { summary, analysis } = response.data;
-
-      if (!summary || !analysis) {
-        logClientEvent("Invalid response - missing summary or analysis");
-        throw new Error("Invalid response from server. Missing summary or analysis.");
+      if (!response.data) {
+        throw new Error("Empty response from server");
       }
 
-      const validatedSummary: SummaryData = {
+      const { summary, analysis } = response.data;
+
+      if (!summary && !analysis) {
+        logClientEvent("Invalid response - missing both summary and analysis");
+        throw new Error("Invalid response from server. Missing summary and analysis data.");
+      }
+
+      if (summary) {
+        const requiredFields = ['chiefComplaint', 'historyOfPresentIllness', 'associatedSymptoms',
+          'pastMedicalHistory', 'medications', 'allergies', 'notesOnInteraction'];
+        const missingFields = requiredFields.filter(field => !(field in summary));
+
+        if (missingFields.length > 0) {
+          logClientEvent(`Summary missing fields: ${missingFields.join(', ')}`);
+          missingFields.forEach(field => {
+            summary[field] = null;
+          });
+        }
+      }
+
+      const validatedSummary: SummaryData = summary ? {
         chiefComplaint: summary.chiefComplaint || null,
         historyOfPresentIllness: summary.historyOfPresentIllness || null,
         associatedSymptoms: summary.associatedSymptoms || null,
@@ -637,53 +664,92 @@ export default function MedicalIntakePage() {
         medications: summary.medications || null,
         allergies: summary.allergies || null,
         notesOnInteraction: summary.notesOnInteraction || null
-      };
+      } : null;
 
-      logClientEvent("Setting summary and analysis data");
-      logClientEvent(`Analysis length: ${analysis.length} chars`);
+      const validatedAnalysis = analysis && typeof analysis === 'string' && analysis.trim().length > 0
+        ? analysis.trim()
+        : null;
 
-      setSummaryData(validatedSummary);
-      setAnalysisData(analysis);
+      logClientEvent("Setting processed summary and analysis data");
+      logClientEvent(`Summary fields present: ${validatedSummary ? Object.keys(validatedSummary).filter(k => validatedSummary[k] !== null).length : 0}`);
+      logClientEvent(`Analysis length: ${validatedAnalysis ? validatedAnalysis.length : 0} chars`);
 
-      // Force a state update to ensure UI changes
+      if (validatedSummary) {
+        setSummaryData(validatedSummary);
+      }
+      if (validatedAnalysis) {
+        setAnalysisData(validatedAnalysis);
+      }
+
+      toast({
+        title: "Interview Complete",
+        description: "Your medical intake interview has been processed successfully."
+      });
+
       setTimeout(() => {
-        logClientEvent("Changing UI state to displaying_results");
+        logClientEvent("Transitioning to results display");
         setUiState('displaying_results');
-        toast({
-          title: "Interview Complete",
-          description: "Your medical intake interview has been processed successfully."
-        });
-      }, 300);
+      }, 500);
 
     } catch (error: any) {
       logClientEvent(`Error submitting transcript: ${error.message || 'Unknown error'}`);
       logApiCall('Backend', 'POST /api/v1/submit-transcript', 'failed', error.response?.status);
 
-      // Create fallback data for demo purposes
-      const fallbackSummary: SummaryData = {
-        chiefComplaint: "Technical Issue - Please retry",
-        historyOfPresentIllness: "There was a technical issue processing your interview.",
-        associatedSymptoms: null,
-        pastMedicalHistory: null,
-        medications: null,
-        allergies: null,
-        notesOnInteraction: `Note: This is fallback data due to processing error: ${error.message || "Unknown error"}`
-      };
+      console.error("❌ Transcript submission error:", error);
 
-      logClientEvent("Setting fallback summary and analysis data");
-      setSummaryData(fallbackSummary);
-      setAnalysisData("This is fallback analysis data. Please retry your interview for accurate results.");
+      let errorMessage = "There was an issue processing your interview.";
+      let shouldShowFallback = false;
 
-      setTimeout(() => {
-        logClientEvent("Changing UI state to displaying_results (fallback)");
-        setUiState('displaying_results');
-        setErrorMessage(error.message || "There was an issue processing your interview. Please try again.");
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+          errorMessage = "Processing timed out. The server may be overloaded. Please try again.";
+        } else if (!error.response) {
+          errorMessage = "Could not connect to the processing server. Please check your internet connection.";
+        } else if (error.response.status >= 500) {
+          errorMessage = "Server error during processing. Please try again later.";
+          shouldShowFallback = true;
+        } else if (error.response.status === 400) {
+          errorMessage = "Invalid interview data. Please start a new interview.";
+        } else {
+          errorMessage = `Processing error (${error.response.status}). Please try again.`;
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      if (shouldShowFallback && validTranscript.length > 0) {
+        logClientEvent("Showing fallback data due to server error");
+
+        const fallbackSummary: SummaryData = {
+          chiefComplaint: "Processing Error - Please Retry",
+          historyOfPresentIllness: "There was a technical issue processing your interview. The conversation was recorded but could not be fully analyzed.",
+          associatedSymptoms: null,
+          pastMedicalHistory: null,
+          medications: null,
+          allergies: null,
+          notesOnInteraction: `Processing failed at ${new Date().toISOString()}. Error: ${errorMessage}`
+        };
+
+        setSummaryData(fallbackSummary);
+        setAnalysisData("Technical processing error occurred. Please retry the interview for complete analysis.");
+
+        setTimeout(() => {
+          setUiState('displaying_results');
+          toast({
+            title: "Partial Results Available",
+            description: "Processing failed but your conversation was recorded. Please try again for full analysis.",
+            variant: "destructive"
+          });
+        }, 500);
+      } else {
+        setErrorMessage(errorMessage);
+        setUiState('error');
         toast({
-          title: "Processing Issue",
-          description: error.message || "There was an issue processing your interview. Please try again.",
+          title: "Processing Failed",
+          description: errorMessage,
           variant: "destructive"
         });
-      }, 300);
+      }
 
     } finally {
       pendingRequestsRef.current = Math.max(0, pendingRequestsRef.current - 1);
@@ -716,26 +782,27 @@ export default function MedicalIntakePage() {
     setTimeout(() => handleStartInterview(), 100);
   };
 
-  // Use the imported debug function for audio and ultravox state
   const handleDebugClick = () => {
-    // Log Ultravox state using the imported utility
-    debugUltravoxState({
-      uvSession,
-      uvStatus,
-      isInterviewActive,
-      hasAudioPermission,
-      uiState,
-      currentTranscript,
-      callId,
-      isOnline,
-      errorMessage
-    });
-    
-    // Debug audio state
-    debugAudioState();
-    
-    // Log the event
-    logClientEvent("Manual debug triggered");
+    try {
+      const debugParams = {
+        uvSession: uvSession || null,
+        uvStatus: uvStatus || '',
+        isInterviewActive: Boolean(isInterviewActive),
+        hasAudioPermission: hasAudioPermission,
+        uiState: uiState || 'unknown',
+        currentTranscript: Array.isArray(currentTranscript) ? currentTranscript : [],
+        callId: callId || '',
+        isOnline: Boolean(isOnline),
+        errorMessage: errorMessage || ''
+      };
+
+      debugUltravoxState(debugParams);
+      debugAudioState();
+      logClientEvent("Manual debug triggered");
+    } catch (error) {
+      console.error('Debug function error:', error);
+      logClientEvent(`Debug function failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   const formatSummaryField = (value: string | null | undefined) => {
@@ -766,7 +833,7 @@ export default function MedicalIntakePage() {
     }
   };
 
-  // Prepare DevTray props
+  // Logging utilities
   const clientEventsLog = useRef<string[]>([]).current;
   const logClientEvent = (event: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -784,7 +851,6 @@ export default function MedicalIntakePage() {
     statusCode?: number;
   }>>([]).current;
 
-  // Log API calls for DevTray
   const logApiCall = (target: string, method: string, outcome: string, statusCode?: number) => {
     const timestamp = new Date().toLocaleTimeString();
     backendCommsLog.unshift({ timestamp, serviceTarget: target, method, outcome, statusCode });
@@ -792,9 +858,50 @@ export default function MedicalIntakePage() {
     console.log(`API Call: ${target} ${method} - ${outcome}${statusCode ? ` (${statusCode})` : ''}`);
   };
 
+  // Development debugging
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      (window as any).debugUltravox = {
+        checkState: () => {
+          console.log("Current State:", {
+            uiState,
+            uvStatus,
+            isInterviewActive,
+            hasAudioPermission,
+            transcriptLength: currentTranscript.length,
+            callId,
+            isOnline,
+            errorMessage
+          });
+        },
+        testMicrophone: async () => {
+          try {
+            const result = await checkMicrophonePermissions();
+            console.log("Microphone test result:", result);
+            return result;
+          } catch (error) {
+            console.error("Microphone test failed:", error);
+            return false;
+          }
+        },
+        testNetwork: async () => {
+          try {
+            const result = await testNetworkConnectivity();
+            console.log("Network test result:", result);
+            return result;
+          } catch (error) {
+            console.error("Network test failed:", error);
+            return false;
+          }
+        }
+      };
+
+      console.log("🔧 Debug tools available: window.debugUltravox");
+    }
+  }, [uiState, uvStatus, isInterviewActive, hasAudioPermission, currentTranscript.length, callId, isOnline, errorMessage]);
+
   return (
     <div className="flex flex-col min-h-screen">
-      {/* Debug button for development */}
       {process.env.NODE_ENV === 'development' && (
         <button
           onClick={handleDebugClick}
@@ -813,12 +920,11 @@ export default function MedicalIntakePage() {
             </div>
             <span className="font-semibold text-lg">MedIntake</span>
           </div>
-          {/* Connection status only shown during interview or when there are issues */}
           {(uiState === 'interviewing' || uiState === 'initiating' || !isOnline) && (
             <div className="flex items-center space-x-2">
               <div className={`w-2 h-2 rounded-full ${!isOnline ? 'bg-red-500 animate-pulse' :
-                  uiState === 'initiating' ? 'bg-orange-400 animate-pulse' :
-                    'bg-green-500'
+                uiState === 'initiating' ? 'bg-orange-400 animate-pulse' :
+                  'bg-green-500'
                 }`} />
               <span className="text-sm text-gray-500">
                 {!isOnline ? 'Connection Lost' :
@@ -830,13 +936,11 @@ export default function MedicalIntakePage() {
         </div>
       </header>
 
-      {/* Add Voice Activity Indicator */}
       <VoiceActivityIndicator
         uvStatus={uvStatus}
         isInterviewActive={isInterviewActive}
       />
 
-      {/* DevTray */}
       <DevTray
         appPhase={uiState}
         sessionStatus={uvStatus}
@@ -857,7 +961,6 @@ export default function MedicalIntakePage() {
       <main className="flex-1">
         <section className="container mx-auto py-12 md:py-24 px-4 md:px-6">
           <div className="grid grid-cols-1 gap-12">
-            {/* Title and Description */}
             <div className="space-y-6 max-w-2xl mx-auto text-center md:text-left md:mx-0">
               <div className="space-y-2">
                 <h1 className="text-4xl md:text-5xl font-bold tracking-tight">
@@ -879,7 +982,6 @@ export default function MedicalIntakePage() {
                 </Badge>
               </div>
 
-              {/* Language Support Section */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 bg-green-500 rounded-full"></div>
@@ -901,9 +1003,7 @@ export default function MedicalIntakePage() {
               </p>
             </div>
 
-            {/* Main Interface */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {/* Audio Interaction Area */}
               <div className="relative h-[400px] rounded-lg overflow-hidden bg-gradient-to-br from-teal-50 to-blue-50 border border-teal-100 shadow-md flex flex-col">
                 <div className="p-6 flex-1 flex flex-col items-center justify-center">
                   <div className="text-center space-y-4">
@@ -1028,16 +1128,20 @@ export default function MedicalIntakePage() {
                             {hasAudioPermission === false && (
                               <Button
                                 onClick={async () => {
-                                  // Use the imported utility function
-                                  const result = await checkMicrophonePermissions();
-                                  if (result.granted) {
-                                    setHasAudioPermission(true);
-                                    logClientEvent("Microphone permission granted");
-                                  } else {
-                                    setHasAudioPermission(false);
-                                    const errorMsg = result.error || "Microphone access denied";
-                                    setErrorMessage(errorMsg);
-                                    logClientEvent(`Microphone permission error: ${errorMsg}`);
+                                  try {
+                                    const result = await checkMicrophonePermissions();
+                                    const hasPermission = result && typeof result === 'object' ? result.granted : Boolean(result);
+                                    if (hasPermission) {
+                                      setHasAudioPermission(true);
+                                      logClientEvent("Microphone permission granted");
+                                    } else {
+                                      setHasAudioPermission(false);
+                                      const errorMsg = (result && typeof result === 'object' && result.error) || "Microphone access denied";
+                                      setErrorMessage(errorMsg);
+                                      logClientEvent(`Microphone permission error: ${errorMsg}`);
+                                    }
+                                  } catch (error) {
+                                    console.error("Error requesting microphone permission:", error);
                                   }
                                 }}
                                 variant="outline"
@@ -1062,9 +1166,7 @@ export default function MedicalIntakePage() {
                 </div>
               </div>
 
-              {/* Results Area */}
               <div className={`space-y-8 ${!(uiState === 'processing_transcript' || uiState === 'displaying_results') ? 'opacity-50' : ''}`}>
-                {/* Summary Box */}
                 <div className="bg-white rounded-lg border shadow-sm">
                   <div className="p-6">
                     <h3 className="text-lg font-semibold mb-4">Medical Summary</h3>
@@ -1121,7 +1223,6 @@ export default function MedicalIntakePage() {
                   </div>
                 </div>
 
-                {/* Analysis Box */}
                 <div className="bg-white rounded-lg border shadow-sm">
                   <div className="p-6">
                     <h3 className="text-lg font-semibold mb-4">Clinical Analysis</h3>
@@ -1152,7 +1253,6 @@ export default function MedicalIntakePage() {
           </div>
         </section>
 
-        {/* How It Works Section */}
         <section className="bg-gray-50 py-16">
           <div className="container mx-auto px-4 md:px-6">
             <div className="text-center mb-12">
@@ -1193,7 +1293,6 @@ export default function MedicalIntakePage() {
           </div>
         </section>
 
-        {/* Integration Options Section */}
         <section className="py-16">
           <div className="container mx-auto px-4 md:px-6">
             <div className="text-center mb-12">
@@ -1245,7 +1344,6 @@ export default function MedicalIntakePage() {
           </div>
         </section>
 
-        {/* About BuildAI Section */}
         <section className="bg-gray-50 py-16">
           <div className="container mx-auto px-4 md:px-6">
             <div className="max-w-3xl mx-auto text-center">

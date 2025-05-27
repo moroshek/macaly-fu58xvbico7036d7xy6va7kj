@@ -171,13 +171,19 @@ export async function checkMicrophonePermissions(): Promise<{
     if (error instanceof DOMException) {
       switch (error.name) {
         case 'NotAllowedError':
-          errorMessage = "Microphone access denied by user";
+          errorMessage = "Microphone access denied by user. Please allow microphone access and try again.";
           break;
         case 'NotFoundError':
-          errorMessage = "No microphone found on this device";
+          errorMessage = "No microphone found on this device. Please connect a microphone and try again.";
           break;
         case 'NotReadableError':
-          errorMessage = "Microphone is already in use by another application";
+          errorMessage = "Microphone is already in use by another application. Please close other applications and try again.";
+          break;
+        case 'OverconstrainedError':
+          errorMessage = "Microphone constraints not supported. Please try with a different microphone.";
+          break;
+        case 'SecurityError':
+          errorMessage = "Microphone access blocked by security settings. Please check your browser security settings.";
           break;
         default:
           errorMessage = `Microphone error: ${error.name} - ${error.message}`;
