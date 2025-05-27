@@ -124,8 +124,8 @@ export default function MedicalIntakePage() {
       isOnline: state.isOnline,
       errorMessage: state.errorMessage
     });
-    appLogger.logClientEvent("Manual debug triggered"); // Use appLogger instance
-  }, [state, appLogger.logClientEvent]); // Use appLogger.logClientEvent in deps
+    logger.logClientEvent("Manual debug triggered"); // Use logger instance
+  }, [state, logger.logClientEvent]); // Use logger.logClientEvent in deps
 
   const formatSummaryField = (value: string | null | undefined) => {
     return value?.trim() || "Not reported";
@@ -195,12 +195,12 @@ export default function MedicalIntakePage() {
         utteranceCount={state.currentTranscript.length}
         lastUtteranceSource={state.currentTranscript.length > 0 ? state.currentTranscript[state.currentTranscript.length - 1].speaker : null}
         submittedDataLength={state.currentTranscript.length > 0 ? state.currentTranscript.map(u => u.text).join('').length : null}
-        backendCommsLog={getBackendComms()}
+        backendCommsLog={logger.getBackendComms()}
         outputSet1Received={!!state.summaryData}
         outputSet1FieldCount={state.summaryData ? Object.keys(state.summaryData).filter(k => state.summaryData && state.summaryData[k] !== null).length : null}
         outputSet2Received={!!state.analysisData}
         outputSet2ApproxLength={state.analysisData ? state.analysisData.length : null}
-        clientEventsLog={getClientEvents().map(e => `${e.timestamp}: ${e.message}`)}
+        clientEventsLog={logger.getClientEvents().map(e => `${e.timestamp}: ${e.message}`)}
       />
 
       <main className="flex-1">
