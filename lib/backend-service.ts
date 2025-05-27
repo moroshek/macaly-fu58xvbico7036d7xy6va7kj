@@ -5,7 +5,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { getConfig, API_ENDPOINTS } from '@/lib/config';
 import { ErrorHandler } from '@/lib/error-handler';
-import { SummaryData } from '@/app/page';
+import { SummaryData } from '@/lib/types'; // Corrected import path
 
 export interface InitiateIntakeResponse {
   joinUrl: string;
@@ -13,9 +13,9 @@ export interface InitiateIntakeResponse {
 }
 
 export interface SubmitTranscriptResponse {
-  message: string;
-  summary: SummaryData;
-  analysis: string;
+  message: string; // Or consider if this field is actually present/needed
+  summary: SummaryData | null; // Allow null as per task and existing logic
+  analysis: string | null; // Allow null as per task
 }
 
 export class BackendService {
@@ -128,14 +128,26 @@ export class BackendService {
         throw new Error('Empty response from server');
       }
 
-      const { summary, analysis } = response.data;
+      // Ensure response.data matches the updated SubmitTranscriptResponse structure.
+      // The existing logic already handles potential undefined/null for summary and analysis,
+      // and normalizes summary fields.
+      const responseData = response.data;
 
-      if (!summary && !analysis) {
-        throw new Error('Invalid response from server. Missing summary and analysis data.');
+      // If the server might not return summary or analysis, ensure they are at least null
+      if (typeof responseData.summary === 'undefined') {
+        responseData.summary = null;
+      }
+      if (typeof responseData.analysis === 'undefined') {
+        responseData.analysis = null;
+      }
+      
+      if (responseData.summary === null && responseData.analysis === null) {
+         // Optional: depending on strictness, could throw error or just return as is
+         console.warn('Response from server missing both summary and analysis data.');
       }
 
-      // Validate and normalize the summary data
-      if (summary) {
+      // Validate and normalize the summary data if it exists
+      if (responseData.summary) {
         const requiredFields = [
           'chiefComplaint',
           'historyOfPresentIllness',
@@ -145,18 +157,20 @@ export class BackendService {
           'allergies',
           'notesOnInteraction',
         ];
+        
+        const currentSummary = responseData.summary; // Work with a local variable for type safety
 
-        const missingFields = requiredFields.filter((field) => !(field in summary));
+        const missingFields = requiredFields.filter((field) => !(field in currentSummary) || currentSummary[field] === undefined);
 
         if (missingFields.length > 0) {
-          console.warn(`Summary missing fields: ${missingFields.join(', ')}`);
+          console.warn(`Summary missing fields: ${missingFields.join(', ')}. Setting them to null.`);
           missingFields.forEach((field) => {
-            (summary as any)[field] = null;
+            (currentSummary as any)[field] = null;
           });
         }
       }
-
-      return response.data;
+      
+      return responseData;
     } catch (error) {
       console.error('Failed to submit transcript:', error);
       throw error;

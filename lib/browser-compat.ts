@@ -10,14 +10,14 @@
 /**
  * Type for browser compatibility check results
  */
-export interface CompatibilityCheckResult {
+export interface BrowserCompatibilityResult { // Renamed from CompatibilityCheckResult
   compatible: boolean;
   issues: string[];
-  details: {
+  details: { // details is not optional as it's always returned
     mediaDevices: boolean;
     webSockets: boolean;
     webAudio: boolean;
-    permissions: boolean;
+    permissions: boolean; // Added permissions as it was already there
   };
 }
 
@@ -25,7 +25,7 @@ export interface CompatibilityCheckResult {
  * Checks if the current browser supports all required features
  * @returns Object with compatibility check results
  */
-export function checkBrowserCompatibility(): CompatibilityCheckResult {
+export function checkBrowserCompatibility(): BrowserCompatibilityResult { // Renamed return type
   const issues: string[] = [];
   const details = {
     mediaDevices: false,
@@ -133,14 +133,19 @@ export async function validateAudioSupport(): Promise<{
 }
 
 /**
+ * Type for microphone permission check results
+ */
+export interface MicrophonePermissionResult {
+  granted: boolean;
+  error?: string;
+  state?: PermissionState; // state is optional as it's not always returned
+}
+
+/**
  * Checks if microphone permissions are granted
  * @returns Promise resolving to a check result
  */
-export async function checkMicrophonePermissions(): Promise<{
-  granted: boolean;
-  state?: PermissionState;
-  error?: string;
-}> {
+export async function checkMicrophonePermissions(): Promise<MicrophonePermissionResult> {
   // Try to use the Permissions API first if available
   if (navigator.permissions) {
     try {

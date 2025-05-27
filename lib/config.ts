@@ -57,3 +57,19 @@ export const UI_STATES = {
 } as const;
 
 export type UIState = typeof UI_STATES[keyof typeof UI_STATES];
+
+// Constants for UI behavior and display
+export const CALL_ID_DISPLAY_LENGTH = 8;
+export const DISPLAY_RESULTS_DELAY_MS = 500;
+export const START_INTERVIEW_DELAY_MS = 100;
+export const Z_INDEX_DEBUG_BUTTON = 9999;
+export const SCREEN_READER_ANNOUNCEMENT_MAX_LENGTH = 50;
+
+export const PULSING_ANIMATION_CONFIG = {
+  count: 3,
+  delayIncrement: 0.3, // seconds
+  duration: 2, // seconds
+  scaleIncrement: 0.3,
+  initialOpacity: 0.7,
+  opacityDecrement: 0.15,
+} as const;

@@ -14,7 +14,7 @@ interface UseUltravoxSessionProps {
   onTranscriptUpdate: (transcript: Utterance[]) => void;
   onStatusChange: (status: string) => void;
   onSessionEnd: () => void;
-  onError: (error: string) => void;
+  onError: (error: Error) => void; // Changed to Error type
 }
 
 export function useUltravoxSession({
@@ -163,9 +163,17 @@ export function useUltravoxSession({
       const handleError = (event: any) => {
         const errorObj = event?.error || event;
         console.error('[Ultravox] Error:', errorObj);
-        const errorMessage =
-          errorObj?.message || 'There was a problem with the interview connection.';
-        onError(errorMessage);
+        let errorToReport: Error;
+        if (errorObj instanceof Error) {
+          errorToReport = errorObj;
+        } else if (typeof errorObj?.message === 'string') {
+          errorToReport = new Error(errorObj.message);
+        } else if (typeof errorObj === 'string') {
+          errorToReport = new Error(errorObj);
+        } else {
+          errorToReport = new Error('An unknown Ultravox error occurred.');
+        }
+        onError(errorToReport);
       };
 
       // Add event listeners
@@ -198,7 +206,10 @@ export function useUltravoxSession({
       setIsConnecting(false);
 
       const appError = errorHandler.handle(error, { source: 'ultravox_init' });
-      onError(appError.userMessage || appError.message);
+      // appError itself is an Error object, so it can be passed directly if its structure is suitable,
+      // or wrap its message in a new Error.
+      // Given appError has userMessage, it's better to pass a new Error with that message.
+      onError(new Error(appError.userMessage || appError.message));
 
       toast({
         title: 'Connection Error',
