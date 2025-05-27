@@ -11,6 +11,12 @@ import { UltravoxSession } from 'ultravox-client';
 import DevTray from "@/components/DevTray";
 import VoiceActivityIndicator from "@/components/VoiceActivityIndicator";
 
+// Import utility modules
+import { debugUltravoxState, testWebSocketConnection, shouldEndConversation, debugAudioState } from "@/lib/ultravox-debug";
+import { testNetworkConnectivity, checkApiConnectivity, setupNetworkListeners } from "@/lib/network-utils";
+import { checkBrowserCompatibility, checkMicrophonePermissions } from "@/lib/browser-compat";
+import useUltravoxDebug from "@/hooks/useUltravoxDebug";
+
 // Configure axios with retries
 axios.defaults.timeout = 30000;
 
@@ -70,146 +76,61 @@ export default function MedicalIntakePage() {
   const { toast } = useToast();
   const pendingRequestsRef = useRef<number>(0);
 
-  // Enhanced microphone permission check
-  const checkMicrophonePermission = async (): Promise<boolean> => {
-    try {
-      // First check if we already have permission
-      if (navigator.permissions) {
-        const permission = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-        if (permission.state === 'granted') {
-          setHasAudioPermission(true);
-          return true;
-        } else if (permission.state === 'denied') {
-          setHasAudioPermission(false);
-          setErrorMessage("Microphone access denied. Please enable microphone permissions in your browser settings and refresh the page.");
-          return false;
-        }
-      }
+  // Use imported microphone permission check utility directly
 
-      // If permission is not determined, request it
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
+  // Using the imported shouldEndConversation function from ultravox-debug.ts
+  // No local implementation needed as we're importing the function directly
 
-      // Permission granted, stop the stream immediately
-      stream.getTracks().forEach(track => track.stop());
-      setHasAudioPermission(true);
-      logClientEvent("Microphone permission granted");
-      return true;
-    } catch (error: any) {
-      console.error("Microphone permission error:", error);
-      setHasAudioPermission(false);
-
-      let errorMsg = "Microphone access error: ";
-      if (error.name === 'NotAllowedError') {
-        errorMsg += "Permission denied. Please allow microphone access and try again.";
-      } else if (error.name === 'NotFoundError') {
-        errorMsg += "No microphone found. Please connect a microphone.";
-      } else if (error.name === 'NotReadableError') {
-        errorMsg += "Microphone is being used by another application.";
-      } else {
-        errorMsg += error.message || "Unknown error occurred.";
-      }
-
-      setErrorMessage(errorMsg);
-      logClientEvent(`Microphone permission error: ${errorMsg}`);
-      return false;
-    }
-  };
-
-  // Enhanced shouldEndConversation function (backup detection)
-  const shouldEndConversation = (message: any): boolean => {
-    if (!message) return false;
-
-    // Check for explicit hangUp tool calls
-    if (message.toolCalls && Array.isArray(message.toolCalls)) {
-      const hangUpCall = message.toolCalls.find((call: any) => {
-        if (!call) return false;
-
-        const toolName = call.toolName || call.name || '';
-        return toolName.toLowerCase().includes('hangup') ||
-          toolName.toLowerCase().includes('hang_up') ||
-          toolName.toLowerCase().includes('hang-up');
-      });
-
-      if (hangUpCall) {
-        console.log("Found hangUp tool call in message:", hangUpCall);
-        return true;
-      }
-    }
-
-    // Check message text for end phrases
-    const textToCheck = message.content || message.text || '';
-    if (typeof textToCheck === 'string') {
-      const lowerText = textToCheck.toLowerCase();
-      const endPhrases = [
-        'thank you for completing', 'thank you for your time',
-        'that concludes', 'interview complete', 'interview is complete',
-        'have a great day', 'have a good day', 'take care',
-        'goodbye', 'provider will review', 'doctor will see you',
-        'staff will be with you', 'submitted for review',
-        'all done', 'finished', 'complete'
-      ];
-
-      for (const phrase of endPhrases) {
-        if (lowerText.includes(phrase)) {
-          console.log(`Found end phrase: "${phrase}"`);
-          return true;
-        }
-      }
-    }
-
-    return false;
-  };
-
-  // Network connectivity check
-  const checkApiConnectivity = async () => {
-    try {
-      logClientEvent('Testing API connectivity');
-      const response = await axios.get(`${API_BASE_URL}/health`, { timeout: 10000 });
-      if (!isOnline) setIsOnline(true);
-      logApiCall('Backend', 'GET /health', 'success', response.status);
-      return true;
-    } catch (error) {
-      console.warn('API connectivity test failed:', error);
-      logClientEvent(`API connectivity test failed: ${error}`);
-      logApiCall('Backend', 'GET /health', 'failed');
-      setIsOnline(false);
-      return false;
-    }
-  };
+  // Use imported API connectivity check utility directly
 
   useEffect(() => {
     setIsOnline(navigator.onLine);
 
-    const handleOnline = () => {
-      console.log('Network connection restored');
-      setIsOnline(true);
-      checkApiConnectivity();
-    };
-
-    const handleOffline = () => {
-      console.log('Network connection lost');
-      setIsOnline(false);
-    };
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    // Use the imported utility to set up network listeners
+    const cleanup = setupNetworkListeners(
+      // Set online status
+      (online) => {
+        setIsOnline(online);
+      },
+      // Online callback
+      async () => {
+        logClientEvent('Network connection restored');
+        try {
+          logClientEvent('Testing API connectivity');
+          const result = await checkApiConnectivity(API_BASE_URL);
+          if (!isOnline && result.success) setIsOnline(true);
+          logApiCall('Backend', 'GET /health', result.success ? 'success' : 'failed', result.status);
+        } catch (error) {
+          console.warn('API connectivity test failed:', error);
+          logClientEvent(`API connectivity test failed: ${error}`);
+          logApiCall('Backend', 'GET /health', 'failed');
+          setIsOnline(false);
+        }
+      },
+      // Offline callback
+      () => {
+        logClientEvent('Network connection lost');
+      }
+    );
 
     // Initial connectivity check
     if (navigator.onLine) {
-      checkApiConnectivity();
+      // Check API connectivity
+      checkApiConnectivity(API_BASE_URL)
+        .then(result => {
+          if (!isOnline && result.success) setIsOnline(true);
+          logApiCall('Backend', 'GET /health', result.success ? 'success' : 'failed', result.status);
+        })
+        .catch(error => {
+          console.warn('API connectivity test failed:', error);
+          logClientEvent(`API connectivity test failed: ${error}`);
+          logApiCall('Backend', 'GET /health', 'failed');
+          setIsOnline(false);
+        });
     }
 
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, [isOnline]);
+    return cleanup;
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -225,13 +146,31 @@ export default function MedicalIntakePage() {
     };
   }, [uvSession]);
 
+  // Using imported testWebSocketConnection and testNetworkConnectivity functions
+  // No local implementation needed
+
+  // Use imported browser compatibility check utility directly
+
   const initUltravoxSession = async (joinUrl: string) => {
     try {
+      logClientEvent("Starting Ultravox initialization");
+      
+      // Test if UltravoxSession is available
+      if (typeof UltravoxSession !== 'function') {
+        throw new Error("UltravoxSession is not available - check import");
+      }
+      
+      // Test WebSocket connectivity using the imported utility
+      const wsTestResult = await testWebSocketConnection(joinUrl);
+      if (!wsTestResult) {
+        logClientEvent("WebSocket connectivity test failed");
+      }
+
       logClientEvent("Initializing Ultravox session");
 
       // Create session with proper configuration
       const session = new UltravoxSession({
-        experimentalMessages: true // Enable experimental messages for hangUp detection
+        experimentalMessages: true as any  // ✅ CRITICAL: Must be boolean - use type assertion for compatibility
       });
       setUvSession(session);
 
@@ -446,13 +385,52 @@ export default function MedicalIntakePage() {
       });
       return;
     }
+    
+    // Check browser compatibility using the imported utility directly
+    const browserCompatibility = checkBrowserCompatibility();
+    if (!browserCompatibility.compatible) {
+      logClientEvent(`Browser compatibility issues: ${browserCompatibility.issues.join(', ')}`);
+
+      setErrorMessage("Your browser doesn't support all required features. Please try a modern browser like Chrome, Edge, or Safari.");
+      toast({
+        title: "Browser Compatibility Issue",
+        description: "Your browser doesn't support all required features. Please try a modern browser.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Test network connectivity to key services
+    logClientEvent("Testing network connectivity to required services");
+    const networkOk = await testNetworkConnectivity();
+    if (!networkOk) {
+      setErrorMessage("Cannot reach required services. Please check your internet connection or try again later.");
+      toast({
+        title: "Network Connectivity Issue",
+        description: "Cannot reach required services. Please check your connection or try again later.",
+        variant: "destructive"
+      });
+      return;
+    }
 
     try {
       // First, request microphone permissions
       setUiState('requesting_permissions');
       logClientEvent("Requesting microphone permissions");
 
-      const hasPermission = await checkMicrophonePermission();
+      // Use the imported utility function
+      const result = await checkMicrophonePermissions();
+      const hasPermission = result.granted;
+      
+      if (hasPermission) {
+        setHasAudioPermission(true);
+        logClientEvent("Microphone permission granted");
+      } else {
+        setHasAudioPermission(false);
+        const errorMsg = result.error || "Microphone access denied";
+        setErrorMessage(errorMsg);
+        logClientEvent(`Microphone permission error: ${errorMsg}`);
+      }
       if (!hasPermission) {
         setUiState('error');
         toast({
@@ -477,6 +455,14 @@ export default function MedicalIntakePage() {
         logClientEvent("Invalid response - missing joinUrl or callId");
         throw new Error("Invalid response from server. Missing joinUrl or callId.");
       }
+      
+      // Test WebSocket connectivity before initializing Ultravox
+      logClientEvent("Testing WebSocket connectivity to Ultravox");
+      testWebSocketConnection(joinUrl);
+      
+      // Test network connectivity again right before initializing session
+      logClientEvent("Final network connectivity check before session initialization");
+      await testNetworkConnectivity();
 
       setCallId(newCallId);
       logClientEvent(`Call ID received: ${newCallId.substring(0, 8)}...`);
@@ -730,44 +716,26 @@ export default function MedicalIntakePage() {
     setTimeout(() => handleStartInterview(), 100);
   };
 
-  // Debug function for audio state
-  const debugAudioState = () => {
-    console.log("=== AUDIO DEBUG STATE ===");
-    console.log("UV Session:", !!uvSession);
-    console.log("UV Status:", uvStatus);
-    console.log("Is Interview Active:", isInterviewActive);
-    console.log("Has Audio Permission:", hasAudioPermission);
-    console.log("UI State:", uiState);
-    console.log("Transcript Length:", currentTranscript.length);
-    console.log("Call ID:", callId);
-    console.log("Is Online:", isOnline);
-    console.log("Error Message:", errorMessage);
-
-    if (uvSession) {
-      console.log("Mic Muted:", uvSession.isMicMuted?.());
-      console.log("Speaker Muted:", uvSession.isSpeakerMuted?.());
-      console.log("Session Transcripts Length:", uvSession.transcripts?.length || 0);
-    }
-
-    // Test audio context
-    try {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      console.log("Audio Context State:", audioContext.state);
-    } catch (e) {
-      console.log("Audio Context Error:", e);
-    }
-
-    // Test microphone access
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then((stream) => {
-        console.log("Microphone test: SUCCESS");
-        stream.getTracks().forEach(track => track.stop());
-      })
-      .catch((error) => {
-        console.log("Microphone test: FAILED", error);
-      });
-
-    console.log("=== END DEBUG ===");
+  // Use the imported debug function for audio and ultravox state
+  const handleDebugClick = () => {
+    // Log Ultravox state using the imported utility
+    debugUltravoxState({
+      uvSession,
+      uvStatus,
+      isInterviewActive,
+      hasAudioPermission,
+      uiState,
+      currentTranscript,
+      callId,
+      isOnline,
+      errorMessage
+    });
+    
+    // Debug audio state
+    debugAudioState();
+    
+    // Log the event
+    logClientEvent("Manual debug triggered");
   };
 
   const formatSummaryField = (value: string | null | undefined) => {
@@ -829,11 +797,11 @@ export default function MedicalIntakePage() {
       {/* Debug button for development */}
       {process.env.NODE_ENV === 'development' && (
         <button
-          onClick={debugAudioState}
+          onClick={handleDebugClick}
           className="fixed top-4 right-4 bg-red-500 text-white p-2 rounded z-50 text-xs font-mono"
           style={{ zIndex: 9999 }}
         >
-          Debug Audio
+          Debug State
         </button>
       )}
 
@@ -1059,7 +1027,19 @@ export default function MedicalIntakePage() {
                             </Button>
                             {hasAudioPermission === false && (
                               <Button
-                                onClick={checkMicrophonePermission}
+                                onClick={async () => {
+                                  // Use the imported utility function
+                                  const result = await checkMicrophonePermissions();
+                                  if (result.granted) {
+                                    setHasAudioPermission(true);
+                                    logClientEvent("Microphone permission granted");
+                                  } else {
+                                    setHasAudioPermission(false);
+                                    const errorMsg = result.error || "Microphone access denied";
+                                    setErrorMessage(errorMsg);
+                                    logClientEvent(`Microphone permission error: ${errorMsg}`);
+                                  }
+                                }}
                                 variant="outline"
                                 size="sm"
                               >
