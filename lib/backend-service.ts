@@ -1,0 +1,179 @@
+/**
+ * Backend API service for handling all API interactions
+ */
+
+import axios, { AxiosInstance } from 'axios';
+import { getConfig, API_ENDPOINTS } from '@/lib/config';
+import { ErrorHandler } from '@/lib/error-handler';
+import { SummaryData } from '@/app/page';
+
+export interface InitiateIntakeResponse {
+  joinUrl: string;
+  callId: string;
+}
+
+export interface SubmitTranscriptResponse {
+  message: string;
+  summary: SummaryData;
+  analysis: string;
+}
+
+export class BackendService {
+  private static instance: BackendService;
+  private axiosInstance: AxiosInstance;
+  private errorHandler = ErrorHandler.getInstance();
+  private config = getConfig();
+
+  private constructor() {
+    this.axiosInstance = axios.create({
+      baseURL: this.config.apiBaseUrl,
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    // Add request interceptor for logging
+    this.axiosInstance.interceptors.request.use(
+      (config) => {
+        console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
+        return config;
+      },
+      (error) => {
+        console.error('[API] Request error:', error);
+        return Promise.reject(error);
+      }
+    );
+
+    // Add response interceptor for error handling
+    this.axiosInstance.interceptors.response.use(
+      (response) => {
+        console.log(`[API] Response ${response.status} from ${response.config.url}`);
+        return response;
+      },
+      (error) => {
+        const appError = this.errorHandler.handle(error, {
+          url: error.config?.url,
+          method: error.config?.method,
+        });
+        return Promise.reject(appError);
+      }
+    );
+  }
+
+  static getInstance(): BackendService {
+    if (!BackendService.instance) {
+      BackendService.instance = new BackendService();
+    }
+    return BackendService.instance;
+  }
+
+  /**
+   * Check API health
+   */
+  async checkHealth(): Promise<boolean> {
+    try {
+      const response = await this.axiosInstance.get(API_ENDPOINTS.HEALTH);
+      return response.status === 200;
+    } catch (error) {
+      console.error('Health check failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Initiate a new intake session
+   */
+  async initiateIntake(): Promise<InitiateIntakeResponse> {
+    try {
+      const response = await this.axiosInstance.post<InitiateIntakeResponse>(
+        API_ENDPOINTS.INITIATE_INTAKE,
+        {}
+      );
+
+      if (!response.data.joinUrl || !response.data.callId) {
+        throw new Error('Invalid response from server. Missing joinUrl or callId.');
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('Failed to initiate intake:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Submit transcript for processing
+   */
+  async submitTranscript(
+    callId: string,
+    transcript: string
+  ): Promise<SubmitTranscriptResponse> {
+    try {
+      const response = await this.axiosInstance.post<SubmitTranscriptResponse>(
+        API_ENDPOINTS.SUBMIT_TRANSCRIPT,
+        {
+          callId: callId.trim(),
+          transcript: transcript,
+        },
+        {
+          timeout: this.config.transcriptSubmissionTimeoutMs,
+          headers: {
+            'X-Request-ID': `${callId}-${Date.now()}`,
+          },
+        }
+      );
+
+      if (!response.data) {
+        throw new Error('Empty response from server');
+      }
+
+      const { summary, analysis } = response.data;
+
+      if (!summary && !analysis) {
+        throw new Error('Invalid response from server. Missing summary and analysis data.');
+      }
+
+      // Validate and normalize the summary data
+      if (summary) {
+        const requiredFields = [
+          'chiefComplaint',
+          'historyOfPresentIllness',
+          'associatedSymptoms',
+          'pastMedicalHistory',
+          'medications',
+          'allergies',
+          'notesOnInteraction',
+        ];
+
+        const missingFields = requiredFields.filter((field) => !(field in summary));
+
+        if (missingFields.length > 0) {
+          console.warn(`Summary missing fields: ${missingFields.join(', ')}`);
+          missingFields.forEach((field) => {
+            (summary as any)[field] = null;
+          });
+        }
+      }
+
+      return response.data;
+    } catch (error) {
+      console.error('Failed to submit transcript:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set custom timeout for specific operations
+   */
+  setRequestTimeout(timeout: number) {
+    this.axiosInstance.defaults.timeout = timeout;
+  }
+
+  /**
+   * Get the current API base URL
+   */
+  getApiBaseUrl(): string {
+    return this.config.apiBaseUrl;
+  }
+}

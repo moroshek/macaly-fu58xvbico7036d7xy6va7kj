@@ -3,93 +3,92 @@
  */
 
 /**
- * UltravoxDebugInfo: Type for Ultravox session debug information
+ * Interface for Ultravox session debug state
  */
-export interface UltravoxDebugInfo {
-  hasSession: boolean;
-  status: string;
-  isActive: boolean;
-  micPermission: boolean | null;
+export interface UltravoxDebugState {
+  uvSession: any;
+  uvStatus: string;
+  isInterviewActive: boolean;
+  hasAudioPermission: boolean | null;
   uiState: string;
-  transcriptLength: number;
-  callId: string | null;
+  currentTranscript: Array<{ speaker: string; text: string }>;
+  callId: string;
   isOnline: boolean;
-  errorMessage: string | null;
-  micMuted?: boolean;
-  speakerMuted?: boolean;
-  sessionTranscriptsLength?: number;
+  errorMessage: string;
 }
 
 /**
- * NetworkTestResult: Type for network connectivity test results
+ * Interface for network connectivity test results
  */
 export interface NetworkTestResult {
-  internet: boolean;
-  ultravoxApi: boolean;
-  backendApi: boolean;
-  webSocket: boolean;
-  timestamp: number;
-  details?: {
-    latency?: number;
-    errors?: string[];
-    endpoints?: Record<string, {
-      success: boolean;
-      status?: number;
-      message: string;
-    }>;
-  };
+  success: boolean;
+  status?: number;
+  message: string;
+  latency?: number;
+  timestamp?: number;
 }
 
 /**
- * BrowserCompatResult: Type for browser compatibility test results
+ * Interface for WebSocket connection test results
  */
-export interface BrowserCompatResult {
+export interface WebSocketTestResult {
+  success: boolean;
+  latency?: number;
+  error?: string;
+  protocolSupported?: boolean;
+}
+
+/**
+ * Interface for browser compatibility test results
+ */
+export interface BrowserCompatibilityResult {
   compatible: boolean;
   issues: string[];
-  features: {
+  details: {
     mediaDevices: boolean;
     webSockets: boolean;
     webAudio: boolean;
     permissions: boolean;
   };
-  audio?: {
-    contextState?: string;
-    sampleRate?: number;
-    microphoneAccess?: boolean;
-    outputDevices?: number;
-    inputDevices?: number;
-  };
 }
 
 /**
- * AudioDeviceInfo: Type for audio device information
+ * Interface for microphone permission test results
  */
-export interface AudioDeviceInfo {
-  microphone: {
-    available: boolean;
-    count: number;
-    labels: string[];
-  };
-  speaker: {
-    available: boolean;
-    count: number;
-    labels: string[];
-  };
-  permission: {
-    granted: boolean;
-    state?: string;
-  };
-}
-
-/**
- * EndpointTestInfo: Type for API endpoint test results
- */
-export interface EndpointTestInfo {
-  url: string;
-  method: string;
-  success: boolean;
-  status?: number;
-  latency?: number;
+export interface MicrophonePermissionResult {
+  granted: boolean;
+  state?: PermissionState;
   error?: string;
-  timestamp: number;
+}
+
+/**
+ * Interface for audio device test results
+ */
+export interface AudioDeviceResult {
+  microphone: boolean;
+  speaker: boolean;
+  devices?: MediaDeviceInfo[];
+  error?: string;
+}
+
+/**
+ * Interface for audio support test results
+ */
+export interface AudioSupportResult {
+  supported: boolean;
+  state?: string;
+  sampleRate?: number;
+  error?: string;
+}
+
+/**
+ * Interface for debug mode options
+ */
+export interface DebugModeOptions {
+  enabled: boolean;
+  verboseLogging: boolean;
+  showDevTools: boolean;
+  logToConsole: boolean;
+  monitorNetwork: boolean;
+  trackPerformance: boolean;
 }

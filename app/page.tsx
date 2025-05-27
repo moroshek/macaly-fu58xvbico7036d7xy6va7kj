@@ -14,8 +14,11 @@ import VoiceActivityIndicator from "@/components/VoiceActivityIndicator";
 import { debugUltravoxState, testWebSocketConnection, debugAudioState } from "@/lib/ultravox-debug";
 import { testNetworkConnectivity, checkApiConnectivity, setupNetworkListeners } from "@/lib/network-utils";
 import { checkBrowserCompatibility, checkMicrophonePermissions } from "@/lib/browser-compat";
+import { getConfig, API_ENDPOINTS, UI_STATES, UIState } from "@/lib/config";
 
-axios.defaults.timeout = 30000;
+// Apply global configuration
+const config = getConfig();
+axios.defaults.timeout = config.ultravoxTimeoutMs;
 
 export type Utterance = {
   speaker: string;
@@ -33,8 +36,8 @@ export type SummaryData = {
   [key: string]: string | null | undefined;
 };
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_API_URL ||
-  'https://ai-medical-intake-service-191450583446.us-central1.run.app';
+// Use centralized configuration
+const API_BASE_URL = config.apiBaseUrl;
 
 const InterviewPulsingAnimation = () => (
   <div className="w-full h-full flex items-center justify-center">
@@ -57,7 +60,7 @@ const InterviewPulsingAnimation = () => (
 );
 
 export default function MedicalIntakePage() {
-  const [uiState, setUiState] = useState<'idle' | 'requesting_permissions' | 'initiating' | 'interviewing' | 'processing_transcript' | 'displaying_results' | 'error'>('idle');
+  const [uiState, setUiState] = useState<UIState>(UI_STATES.IDLE);
   const [uvSession, setUvSession] = useState<any>(null);
   const [callId, setCallId] = useState<string>("");
   const [isInterviewActive, setIsInterviewActive] = useState<boolean>(false);
@@ -123,7 +126,7 @@ export default function MedicalIntakePage() {
       logClientEvent(`Ultravox status: ${status}`);
       setUvStatus(status);
 
-      const activeStates = ['idle', 'listening', 'thinking', 'speaking', 'connected', 'ready'];
+      const activeStates = ['idle', 'listening', 'thinking', 'speaking', 'connected', 'ready', 'active'];
 
       if (status === 'disconnected') {
         console.log("🔌 Ultravox session disconnected");
@@ -138,14 +141,14 @@ export default function MedicalIntakePage() {
               console.log("📤 Auto-submitting transcript after disconnection");
               setTimeout(() => assembleAndSubmitTranscript(), 500);
             } else if (currentTranscriptState.length === 0) {
-              setUiState('idle');
+              setUiState(UI_STATES.IDLE);
             }
             return currentTranscriptState;
           });
           return currentUiState;
         });
       } else if (activeStates.includes(status.toLowerCase())) {
-        setUiState('interviewing');
+        setUiState(UI_STATES.INTERVIEWING);
         setIsInterviewActive(true);
       }
     };
@@ -293,7 +296,7 @@ export default function MedicalIntakePage() {
         const errorObj = event?.error || event;
         console.error("❌ Ultravox error:", errorObj);
         setErrorMessage(errorObj?.message || "There was a problem with the interview connection.");
-        setUiState('error');
+        setUiState(UI_STATES.ERROR);
       };
 
       session.addEventListener('transcripts', handleTranscript);
@@ -326,7 +329,7 @@ export default function MedicalIntakePage() {
         description: error?.message || "Could not connect to the interview service. Please try again.",
         variant: "destructive"
       });
-      setUiState('error');
+      setUiState(UI_STATES.ERROR);
       return false;
     }
   };
@@ -382,7 +385,7 @@ export default function MedicalIntakePage() {
     }
 
     try {
-      setUiState('requesting_permissions');
+      setUiState(UI_STATES.REQUESTING_PERMISSIONS);
       logClientEvent("Requesting microphone permissions");
 
       const result = await checkMicrophonePermissions();
@@ -406,7 +409,7 @@ export default function MedicalIntakePage() {
         setHasAudioPermission(false);
         setErrorMessage(errorMsg);
         logClientEvent(`Microphone permission error: ${errorMsg}`);
-        setUiState('error');
+        setUiState(UI_STATES.ERROR);
         toast({
           title: "Microphone Access Required",
           description: errorMsg,
@@ -415,14 +418,14 @@ export default function MedicalIntakePage() {
         return;
       }
 
-      setUiState('initiating');
+      setUiState(UI_STATES.INITIATING);
       logClientEvent("Starting interview initialization");
 
       pendingRequestsRef.current++;
 
       try {
         logClientEvent("Calling initiate-intake API");
-        const response = await axios.post(`${API_BASE_URL}/api/v1/initiate-intake`, {});
+        const response = await axios.post(`${API_BASE_URL}${API_ENDPOINTS.INITIATE_INTAKE}`, {});
         logApiCall('Backend', 'POST /api/v1/initiate-intake', 'success', response.status);
 
         const { joinUrl, callId: newCallId } = response.data;
@@ -463,7 +466,7 @@ export default function MedicalIntakePage() {
           description: errorMessage,
           variant: "destructive"
         });
-        setUiState('error');
+        setUiState(UI_STATES.ERROR);
       } finally {
         pendingRequestsRef.current = Math.max(0, pendingRequestsRef.current - 1);
       }
@@ -478,7 +481,7 @@ export default function MedicalIntakePage() {
         description: "Failed to start interview. Please try again.",
         variant: "destructive"
       });
-      setUiState('error');
+      setUiState(UI_STATES.ERROR);
     }
   };
 
@@ -512,7 +515,7 @@ export default function MedicalIntakePage() {
       });
 
       console.log("🚀 SENDING TRANSCRIPT TO CLOUD RUN BACKEND");
-      console.log(`🏁 Target: ${API_BASE_URL}/api/v1/submit-transcript`);
+      console.log(`🏁 Target: ${API_BASE_URL}${API_ENDPOINTS.SUBMIT_TRANSCRIPT}`);
       await assembleAndSubmitTranscript();
     } else {
       if (uvSession && uvSession.transcripts && Array.isArray(uvSession.transcripts) && uvSession.transcripts.length > 0) {
@@ -552,7 +555,7 @@ export default function MedicalIntakePage() {
 
     setSummaryData(null);
     setAnalysisData(null);
-    setUiState('processing_transcript');
+    setUiState(UI_STATES.PROCESSING_TRANSCRIPT);
 
     const validTranscript = currentTranscript.filter(utterance => {
       return utterance &&
@@ -570,7 +573,7 @@ export default function MedicalIntakePage() {
         description: "No conversation data was recorded.",
         variant: "destructive"
       });
-      setUiState('error');
+      setUiState(UI_STATES.ERROR);
       return;
     }
 
@@ -582,7 +585,7 @@ export default function MedicalIntakePage() {
         description: "Missing call identifier.",
         variant: "destructive"
       });
-      setUiState('error');
+      setUiState(UI_STATES.ERROR);
       return;
     }
 
@@ -600,7 +603,7 @@ export default function MedicalIntakePage() {
           description: "Conversation too short to process. Please have a longer conversation.",
           variant: "destructive"
         });
-        setUiState('error');
+        setUiState(UI_STATES.ERROR);
         return;
       }
 
@@ -618,10 +621,10 @@ export default function MedicalIntakePage() {
       logApiCall('Backend', 'POST /api/v1/submit-transcript', 'pending');
 
       const response = await axios.post(
-        `${API_BASE_URL}/api/v1/submit-transcript`,
+        `${API_BASE_URL}${API_ENDPOINTS.SUBMIT_TRANSCRIPT}`,
         payload,
         {
-          timeout: 120000,
+          timeout: config.transcriptSubmissionTimeoutMs,
           headers: {
             'Content-Type': 'application/json',
             'X-Request-ID': `${callId}-${Date.now()}`
@@ -656,7 +659,7 @@ export default function MedicalIntakePage() {
         }
       }
 
-      const validatedSummary: SummaryData = summary ? {
+      const validatedSummary = summary ? {
         chiefComplaint: summary.chiefComplaint || null,
         historyOfPresentIllness: summary.historyOfPresentIllness || null,
         associatedSymptoms: summary.associatedSymptoms || null,
@@ -664,7 +667,7 @@ export default function MedicalIntakePage() {
         medications: summary.medications || null,
         allergies: summary.allergies || null,
         notesOnInteraction: summary.notesOnInteraction || null
-      } : null;
+      } as SummaryData : null;
 
       const validatedAnalysis = analysis && typeof analysis === 'string' && analysis.trim().length > 0
         ? analysis.trim()
@@ -688,7 +691,7 @@ export default function MedicalIntakePage() {
 
       setTimeout(() => {
         logClientEvent("Transitioning to results display");
-        setUiState('displaying_results');
+        setUiState(UI_STATES.DISPLAYING_RESULTS);
       }, 500);
 
     } catch (error: any) {
@@ -734,7 +737,7 @@ export default function MedicalIntakePage() {
         setAnalysisData("Technical processing error occurred. Please retry the interview for complete analysis.");
 
         setTimeout(() => {
-          setUiState('displaying_results');
+          setUiState(UI_STATES.DISPLAYING_RESULTS);
           toast({
             title: "Partial Results Available",
             description: "Processing failed but your conversation was recorded. Please try again for full analysis.",
@@ -743,7 +746,7 @@ export default function MedicalIntakePage() {
         }, 500);
       } else {
         setErrorMessage(errorMessage);
-        setUiState('error');
+        setUiState(UI_STATES.ERROR);
         toast({
           title: "Processing Failed",
           description: errorMessage,
