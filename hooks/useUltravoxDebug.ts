@@ -8,7 +8,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { UltravoxDebugInfo } from '@/lib/debug-types';
+import { UltravoxDebugState } from '@/lib/debug-types';
 import { checkBrowserCompatibility } from '@/lib/browser-compat';
 import { testNetworkConnectivity } from '@/lib/network-utils';
 
