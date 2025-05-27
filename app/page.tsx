@@ -55,7 +55,7 @@ const InterviewPulsingAnimation = () => (
 );
 
 export default function MedicalIntakePage() {
-  const [uiState, setUiState] = useState<'idle' | 'initiating' | 'interviewing' | 'processing_transcript' | 'displaying_results' | 'error'>('idle');
+  const [uiState, setUiState] = useState<'idle' | 'requesting_permissions' | 'initiating' | 'interviewing' | 'processing_transcript' | 'displaying_results' | 'error'>('idle');
   const [uvSession, setUvSession] = useState<any>(null);
   const [callId, setCallId] = useState<string>("");
   const [isInterviewActive, setIsInterviewActive] = useState<boolean>(false);
@@ -64,9 +64,62 @@ export default function MedicalIntakePage() {
   const [summaryData, setSummaryData] = useState<SummaryData | null>(null);
   const [analysisData, setAnalysisData] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(true);
+  const [hasAudioPermission, setHasAudioPermission] = useState<boolean | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string>("");
 
   const { toast } = useToast();
   const pendingRequestsRef = useRef<number>(0);
+
+  // Enhanced microphone permission check
+  const checkMicrophonePermission = async (): Promise<boolean> => {
+    try {
+      // First check if we already have permission
+      if (navigator.permissions) {
+        const permission = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+        if (permission.state === 'granted') {
+          setHasAudioPermission(true);
+          return true;
+        } else if (permission.state === 'denied') {
+          setHasAudioPermission(false);
+          setErrorMessage("Microphone access denied. Please enable microphone permissions in your browser settings and refresh the page.");
+          return false;
+        }
+      }
+
+      // If permission is not determined, request it
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      // Permission granted, stop the stream immediately
+      stream.getTracks().forEach(track => track.stop());
+      setHasAudioPermission(true);
+      logClientEvent("Microphone permission granted");
+      return true;
+    } catch (error: any) {
+      console.error("Microphone permission error:", error);
+      setHasAudioPermission(false);
+
+      let errorMsg = "Microphone access error: ";
+      if (error.name === 'NotAllowedError') {
+        errorMsg += "Permission denied. Please allow microphone access and try again.";
+      } else if (error.name === 'NotFoundError') {
+        errorMsg += "No microphone found. Please connect a microphone.";
+      } else if (error.name === 'NotReadableError') {
+        errorMsg += "Microphone is being used by another application.";
+      } else {
+        errorMsg += error.message || "Unknown error occurred.";
+      }
+
+      setErrorMessage(errorMsg);
+      logClientEvent(`Microphone permission error: ${errorMsg}`);
+      return false;
+    }
+  };
 
   // Enhanced shouldEndConversation function (backup detection)
   const shouldEndConversation = (message: any): boolean => {
@@ -76,13 +129,13 @@ export default function MedicalIntakePage() {
     if (message.toolCalls && Array.isArray(message.toolCalls)) {
       const hangUpCall = message.toolCalls.find((call: any) => {
         if (!call) return false;
-        
+
         const toolName = call.toolName || call.name || '';
-        return toolName.toLowerCase().includes('hangup') || 
-               toolName.toLowerCase().includes('hang_up') ||
-               toolName.toLowerCase().includes('hang-up');
+        return toolName.toLowerCase().includes('hangup') ||
+          toolName.toLowerCase().includes('hang_up') ||
+          toolName.toLowerCase().includes('hang-up');
       });
-      
+
       if (hangUpCall) {
         console.log("Found hangUp tool call in message:", hangUpCall);
         return true;
@@ -175,10 +228,10 @@ export default function MedicalIntakePage() {
   const initUltravoxSession = async (joinUrl: string) => {
     try {
       logClientEvent("Initializing Ultravox session");
-      
-      // CRITICAL: Enable experimental messages to detect tool calls
+
+      // Create session with proper configuration
       const session = new UltravoxSession({
-        experimentalMessages: true as any // This is essential for detecting hangUp tool calls
+        experimentalMessages: true // Enable experimental messages for hangUp detection
       });
       setUvSession(session);
 
@@ -190,7 +243,7 @@ export default function MedicalIntakePage() {
         logClientEvent(`Ultravox status: ${status}`);
         setUvStatus(status);
 
-        const activeStates = ['idle', 'listening', 'thinking', 'speaking', 'connected', 'ready', 'active'];
+        const activeStates = ['idle', 'listening', 'thinking', 'speaking', 'connected', 'ready'];
 
         if (status === 'disconnected') {
           console.log("🔌 Ultravox session disconnected");
@@ -231,7 +284,7 @@ export default function MedicalIntakePage() {
                 const utterance = { speaker, text: transcript.text.trim() };
 
                 console.log(`➕ Adding transcript: ${speaker}: ${utterance.text.substring(0, 50)}...`);
-                
+
                 setCurrentTranscript(prev => {
                   const exists = prev.some(u => u.speaker === speaker && u.text === utterance.text);
                   if (exists) return prev;
@@ -253,7 +306,7 @@ export default function MedicalIntakePage() {
 
           if (message && typeof message === 'object') {
             const messageStr = JSON.stringify(message).toLowerCase();
-            
+
             // Check for hangUp tool calls (multiple possible formats)
             const hangupIndicators = [
               'hangup', 'hang_up', 'hang-up',
@@ -262,11 +315,11 @@ export default function MedicalIntakePage() {
             ];
 
             const foundHangup = hangupIndicators.some(indicator => messageStr.includes(indicator));
-            
+
             if (foundHangup) {
               console.log("🚨 DETECTED HANGUP TOOL CALL - Agent wants to end call!");
               logClientEvent("🚨 Agent invoked hangUp tool - ending interview automatically");
-              
+
               // End the interview after a delay to let final audio play
               setTimeout(() => {
                 if (uiState === 'interviewing' && isInterviewActive) {
@@ -279,17 +332,17 @@ export default function MedicalIntakePage() {
 
             // Check for completion phrases in experimental messages
             const completionIndicators = [
-              'interview complete', 'interview is complete', 
+              'interview complete', 'interview is complete',
               'thank you for completing', 'that concludes',
               'all done', 'finished with questions'
             ];
 
             const foundCompletion = completionIndicators.some(indicator => messageStr.includes(indicator));
-            
+
             if (foundCompletion) {
               console.log("✅ DETECTED COMPLETION PHRASE in experimental message");
               logClientEvent("✅ Agent indicated interview completion");
-              
+
               setTimeout(() => {
                 if (uiState === 'interviewing' && isInterviewActive) {
                   console.log("🔚 Auto-ending interview due to completion phrase");
@@ -304,46 +357,13 @@ export default function MedicalIntakePage() {
         }
       };
 
-      // Agent message handler (backup detection)
-      const handleAgentMessage = (event: any) => {
-        try {
-          const message = event?.data || event;
-          console.log("🤖 Agent message received:", message);
-
-          // Add to transcript if it has text
-          if (message && message.text && message.isFinal) {
-            const utterance = {
-              speaker: 'agent',
-              text: message.text.trim()
-            };
-
-            setCurrentTranscript(prev => {
-              const exists = prev.some(u => u.speaker === 'agent' && u.text === utterance.text);
-              if (exists) return prev;
-              return [...prev, utterance];
-            });
-          }
-
-          // Backup end detection
-          if (shouldEndConversation(message)) {
-            console.log("🔚 Detected conversation end signal from agent message (backup)");
-            setTimeout(() => {
-              if (uiState === 'interviewing') {
-                handleEndInterview();
-              }
-            }, 2000);
-          }
-        } catch (err) {
-          console.error("❌ Error processing agent message:", err);
-        }
-      };
-
       // Error handler
       const handleError = (event: any) => {
         const errorObj = event?.error || event;
         console.error("❌ Ultravox error:", errorObj);
-        
+
         if (uiState === 'interviewing' || uiState === 'initiating') {
+          setErrorMessage(errorObj?.message || "There was a problem with the interview. Please try again.");
           toast({
             title: "Interview Error",
             description: errorObj?.message || "There was a problem with the interview. Please try again.",
@@ -358,7 +378,6 @@ export default function MedicalIntakePage() {
         { event: 'status', handler: handleStatusChange },
         { event: 'transcripts', handler: handleTranscript },
         { event: 'experimental_message', handler: handleExperimentalMessage }, // 🔑 CRITICAL
-        { event: 'agentMessage', handler: handleAgentMessage },
         { event: 'error', handler: handleError }
       ];
 
@@ -399,6 +418,7 @@ export default function MedicalIntakePage() {
       return true;
     } catch (error: any) {
       console.error("❌ Error initializing Ultravox session:", error);
+      setErrorMessage(error?.message || "Could not connect to the interview service. Please try again.");
       toast({
         title: "Connection Error",
         description: error?.message || "Could not connect to the interview service. Please try again.",
@@ -414,9 +434,11 @@ export default function MedicalIntakePage() {
     setSummaryData(null);
     setAnalysisData(null);
     setCurrentTranscript([]);
+    setErrorMessage("");
 
     // Check for internet connection first
     if (!navigator.onLine) {
+      setErrorMessage("No internet connection. Please check your connection and try again.");
       toast({
         title: "No Internet Connection",
         description: "Please check your connection and try again.",
@@ -426,18 +448,23 @@ export default function MedicalIntakePage() {
     }
 
     try {
+      // First, request microphone permissions
+      setUiState('requesting_permissions');
+      logClientEvent("Requesting microphone permissions");
+
+      const hasPermission = await checkMicrophonePermission();
+      if (!hasPermission) {
+        setUiState('error');
+        toast({
+          title: "Microphone Access Required",
+          description: errorMessage || "Microphone access is required for the interview. Please grant permission.",
+          variant: "destructive"
+        });
+        return;
+      }
+
       setUiState('initiating');
       logClientEvent("Starting interview initialization");
-
-      // Request microphone permission
-      try {
-        logClientEvent("Requesting microphone permission");
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-        logClientEvent("Microphone access granted");
-      } catch (micError) {
-        logClientEvent(`Microphone access denied: ${micError}`);
-        throw new Error("Microphone access is required for the interview. Please grant permission.");
-      }
 
       pendingRequestsRef.current++;
 
@@ -477,6 +504,7 @@ export default function MedicalIntakePage() {
         logApiCall('Backend', 'POST /api/v1/initiate-intake', 'failed', error.response?.status);
       }
 
+      setErrorMessage(errorMessage);
       toast({
         title: "Interview Error",
         description: errorMessage,
@@ -517,9 +545,9 @@ export default function MedicalIntakePage() {
     if (currentTranscript.length > 0) {
       console.log("📝 Transcript preview:");
       currentTranscript.slice(0, 3).forEach((item, index) => {
-        console.log(`  ${index + 1}. ${item.speaker}: "${item.text.substring(0, 50)}..."`); 
+        console.log(`  ${index + 1}. ${item.speaker}: "${item.text.substring(0, 50)}..."`);
       });
-      
+
       console.log("🚀 SENDING TRANSCRIPT TO CLOUD RUN BACKEND");
       console.log(`🏁 Target: ${API_BASE_URL}/api/v1/submit-transcript`);
       await assembleAndSubmitTranscript();
@@ -533,7 +561,7 @@ export default function MedicalIntakePage() {
             speaker: t.speaker === 'user' ? 'user' : 'agent',
             text: t.text.trim()
           }));
-          
+
         if (sessionTranscripts.length > 0) {
           setCurrentTranscript(sessionTranscripts);
           console.log("🚀 SENDING SESSION TRANSCRIPT TO CLOUD RUN");
@@ -541,8 +569,9 @@ export default function MedicalIntakePage() {
           return;
         }
       }
-      
+
       console.log("❌ No transcript data found");
+      setErrorMessage("No conversation data was recorded. Please try starting a new interview.");
       toast({
         title: "Interview Ended",
         description: "No conversation data was recorded. Please try starting a new interview."
@@ -560,6 +589,7 @@ export default function MedicalIntakePage() {
 
     if (currentTranscript.length === 0) {
       logClientEvent("No transcript data to submit");
+      setErrorMessage("No conversation data was recorded.");
       toast({
         title: "Missing Data",
         description: "No conversation data was recorded.",
@@ -571,6 +601,7 @@ export default function MedicalIntakePage() {
 
     if (!callId) {
       logClientEvent("Missing call ID");
+      setErrorMessage("Missing call identifier.");
       toast({
         title: "Missing Identifier",
         description: "Missing call identifier.",
@@ -597,7 +628,7 @@ export default function MedicalIntakePage() {
       const response = await axios.post(
         `${API_BASE_URL}/api/v1/submit-transcript`,
         payload,
-        { 
+        {
           timeout: 60000,
           headers: { 'Content-Type': 'application/json' }
         }
@@ -660,6 +691,7 @@ export default function MedicalIntakePage() {
       setTimeout(() => {
         logClientEvent("Changing UI state to displaying_results (fallback)");
         setUiState('displaying_results');
+        setErrorMessage(error.message || "There was an issue processing your interview. Please try again.");
         toast({
           title: "Processing Issue",
           description: error.message || "There was an issue processing your interview. Please try again.",
@@ -688,6 +720,7 @@ export default function MedicalIntakePage() {
     setCurrentTranscript([]);
     setSummaryData(null);
     setAnalysisData(null);
+    setErrorMessage("");
     setUiState('idle');
   };
 
@@ -695,6 +728,46 @@ export default function MedicalIntakePage() {
     console.log("Starting new interview");
     resetAll();
     setTimeout(() => handleStartInterview(), 100);
+  };
+
+  // Debug function for audio state
+  const debugAudioState = () => {
+    console.log("=== AUDIO DEBUG STATE ===");
+    console.log("UV Session:", !!uvSession);
+    console.log("UV Status:", uvStatus);
+    console.log("Is Interview Active:", isInterviewActive);
+    console.log("Has Audio Permission:", hasAudioPermission);
+    console.log("UI State:", uiState);
+    console.log("Transcript Length:", currentTranscript.length);
+    console.log("Call ID:", callId);
+    console.log("Is Online:", isOnline);
+    console.log("Error Message:", errorMessage);
+
+    if (uvSession) {
+      console.log("Mic Muted:", uvSession.isMicMuted?.());
+      console.log("Speaker Muted:", uvSession.isSpeakerMuted?.());
+      console.log("Session Transcripts Length:", uvSession.transcripts?.length || 0);
+    }
+
+    // Test audio context
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      console.log("Audio Context State:", audioContext.state);
+    } catch (e) {
+      console.log("Audio Context Error:", e);
+    }
+
+    // Test microphone access
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then((stream) => {
+        console.log("Microphone test: SUCCESS");
+        stream.getTracks().forEach(track => track.stop());
+      })
+      .catch((error) => {
+        console.log("Microphone test: FAILED", error);
+      });
+
+    console.log("=== END DEBUG ===");
   };
 
   const formatSummaryField = (value: string | null | undefined) => {
@@ -708,6 +781,8 @@ export default function MedicalIntakePage() {
     switch (uiState) {
       case 'idle':
         return "Ready to start your medical intake interview";
+      case 'requesting_permissions':
+        return "Requesting microphone permissions...";
       case 'initiating':
         return "Connecting to AI assistant...";
       case 'interviewing':
@@ -717,7 +792,7 @@ export default function MedicalIntakePage() {
       case 'displaying_results':
         return "Interview complete - review your summary";
       case 'error':
-        return "Error occurred - please try again";
+        return errorMessage || "Error occurred - please try again";
       default:
         return "Loading...";
     }
@@ -751,6 +826,17 @@ export default function MedicalIntakePage() {
 
   return (
     <div className="flex flex-col min-h-screen">
+      {/* Debug button for development */}
+      {process.env.NODE_ENV === 'development' && (
+        <button
+          onClick={debugAudioState}
+          className="fixed top-4 right-4 bg-red-500 text-white p-2 rounded z-50 text-xs font-mono"
+          style={{ zIndex: 9999 }}
+        >
+          Debug Audio
+        </button>
+      )}
+
       <header className="container mx-auto py-4 px-4 md:px-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
@@ -759,23 +845,31 @@ export default function MedicalIntakePage() {
             </div>
             <span className="font-semibold text-lg">MedIntake</span>
           </div>
-          <div className="flex items-center space-x-2">
-            <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-sm text-gray-500">
-              {isOnline ? 'Connected' : 'Offline'}
-            </span>
-          </div>
+          {/* Connection status only shown during interview or when there are issues */}
+          {(uiState === 'interviewing' || uiState === 'initiating' || !isOnline) && (
+            <div className="flex items-center space-x-2">
+              <div className={`w-2 h-2 rounded-full ${!isOnline ? 'bg-red-500 animate-pulse' :
+                  uiState === 'initiating' ? 'bg-orange-400 animate-pulse' :
+                    'bg-green-500'
+                }`} />
+              <span className="text-sm text-gray-500">
+                {!isOnline ? 'Connection Lost' :
+                  uiState === 'initiating' ? 'Connecting...' :
+                    'Connected'}
+              </span>
+            </div>
+          )}
         </div>
       </header>
-      
+
       {/* Add Voice Activity Indicator */}
-      <VoiceActivityIndicator 
-        uvStatus={uvStatus} 
-        isInterviewActive={isInterviewActive} 
+      <VoiceActivityIndicator
+        uvStatus={uvStatus}
+        isInterviewActive={isInterviewActive}
       />
-      
+
       {/* DevTray */}
-      <DevTray 
+      <DevTray
         appPhase={uiState}
         sessionStatus={uvStatus}
         sessionId={callId}
@@ -816,8 +910,26 @@ export default function MedicalIntakePage() {
                   <span>Secure Encryption</span>
                 </Badge>
               </div>
+
+              {/* Language Support Section */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                  <span className="text-sm font-medium text-blue-900">Available in English</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-orange-400 rounded-full animate-pulse"></div>
+                  <span className="text-sm text-blue-700">Spanish - Coming Soon</span>
+                </div>
+                <p className="text-xs text-blue-600">
+                  Multi-language support powered by our advanced AI technology
+                </p>
+              </div>
               <p className="text-sm text-gray-500">
                 This is beta software. Do not use this as medical advice. It is for informational purposes only.
+              </p>
+              <p className="text-xs text-gray-400 mt-2">
+                U.S. Provisional Patent Application (No. 63/811,932) - Patent Pending
               </p>
             </div>
 
@@ -833,16 +945,39 @@ export default function MedicalIntakePage() {
 
                     {uiState === 'idle' && (
                       <div className="space-y-6">
-                        <div className="w-24 h-24 mx-auto bg-teal-500 rounded-full flex items-center justify-center">
+                        <button
+                          onClick={handleStartInterview}
+                          disabled={hasAudioPermission === false}
+                          className="w-24 h-24 mx-auto bg-teal-500 rounded-full flex items-center justify-center hover:bg-teal-600 transition-colors cursor-pointer disabled:bg-gray-400 disabled:cursor-not-allowed"
+                          aria-label="Start Medical Intake"
+                        >
                           <Mic size={32} className="text-white" />
-                        </div>
+                        </button>
                         <Button
                           onClick={handleStartInterview}
                           size="lg"
                           className="bg-teal-500 hover:bg-teal-600"
+                          disabled={hasAudioPermission === false}
                         >
                           Start Medical Intake
                         </Button>
+                        {hasAudioPermission === false && (
+                          <p className="text-red-500 text-sm mt-2">
+                            Microphone access required to start interview
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {uiState === 'requesting_permissions' && (
+                      <div className="space-y-6">
+                        <div className="w-24 h-24 mx-auto bg-orange-100 rounded-full flex items-center justify-center">
+                          <Mic size={32} className="text-orange-500 animate-pulse" />
+                        </div>
+                        <div className="space-y-2">
+                          <p className="text-orange-600 font-medium">Requesting Microphone Access</p>
+                          <p className="text-sm text-gray-500">Please allow microphone access when prompted</p>
+                        </div>
                       </div>
                     )}
 
@@ -911,13 +1046,27 @@ export default function MedicalIntakePage() {
                         </div>
                         <div className="space-y-2">
                           <p className="text-red-600 font-medium">Error Occurred</p>
-                          <Button
-                            onClick={resetAll}
-                            variant="outline"
-                            size="sm"
-                          >
-                            Try Again
-                          </Button>
+                          {errorMessage && (
+                            <p className="text-sm text-red-500 px-4">{errorMessage}</p>
+                          )}
+                          <div className="space-y-2">
+                            <Button
+                              onClick={resetAll}
+                              variant="outline"
+                              size="sm"
+                            >
+                              Try Again
+                            </Button>
+                            {hasAudioPermission === false && (
+                              <Button
+                                onClick={checkMicrophonePermission}
+                                variant="outline"
+                                size="sm"
+                              >
+                                Request Microphone Access
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1027,9 +1176,9 @@ export default function MedicalIntakePage() {
         <section className="bg-gray-50 py-16">
           <div className="container mx-auto px-4 md:px-6">
             <div className="text-center mb-12">
-              <h2 className="text-3xl font-bold">How It Works</h2>
+              <h2 className="text-3xl font-bold">How It Works for Your Health System</h2>
               <p className="text-gray-500 mt-2 max-w-2xl mx-auto">
-                Our AI-powered intake process is designed to be simple, secure, and efficient
+                Streamline patient intake and enhance provider efficiency with AI-powered medical conversations
               </p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -1037,28 +1186,106 @@ export default function MedicalIntakePage() {
                 <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center mb-4">
                   <span className="text-teal-600 font-semibold">1</span>
                 </div>
-                <h3 className="text-xl font-semibold mb-2">Start Your Intake</h3>
+                <h3 className="text-xl font-semibold mb-2">Patient Initiates Intake</h3>
                 <p className="text-gray-500">
-                  Begin the process with a simple click. No downloads or complicated setup required.
+                  Patients speak naturally with our AI assistant to complete their medical intake. No forms, no typing—just conversation.
                 </p>
               </div>
               <div className="bg-white p-6 rounded-lg shadow-sm">
                 <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center mb-4">
                   <span className="text-teal-600 font-semibold">2</span>
                 </div>
-                <h3 className="text-xl font-semibold mb-2">Answer Questions</h3>
+                <h3 className="text-xl font-semibold mb-2">AI Processes & Analyzes</h3>
                 <p className="text-gray-500">
-                  Speak naturally with our AI assistant to answer medical questions.
+                  Advanced medical AI extracts key information and generates clinical insights from the conversation.
                 </p>
               </div>
               <div className="bg-white p-6 rounded-lg shadow-sm">
                 <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center mb-4">
                   <span className="text-teal-600 font-semibold">3</span>
                 </div>
-                <h3 className="text-xl font-semibold mb-2">See Your Doctor</h3>
+                <h3 className="text-xl font-semibold mb-2">Provider Receives Insights</h3>
                 <p className="text-gray-500">
-                  Your provider receives your information instantly, making your consultation more efficient.
+                  Your providers get structured intake summaries and AI-generated clinical insights before the appointment begins.
                 </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Integration Options Section */}
+        <section className="py-16">
+          <div className="container mx-auto px-4 md:px-6">
+            <div className="text-center mb-12">
+              <h2 className="text-3xl font-bold">Enterprise Integration Options</h2>
+              <p className="text-gray-500 mt-2 max-w-2xl mx-auto">
+                Secure, scalable deployment options designed for healthcare enterprise environments
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+              <div className="bg-blue-50 border border-blue-200 p-6 rounded-lg">
+                <div className="flex items-center mb-4">
+                  <Shield className="h-6 w-6 text-blue-600 mr-3" />
+                  <h3 className="text-xl font-semibold text-blue-900">Private Cloud Deployment</h3>
+                </div>
+                <p className="text-blue-700 mb-4">
+                  Deploy within your existing cloud infrastructure (AWS, Azure, GCP) with full data control and compliance.
+                </p>
+                <ul className="text-sm text-blue-600 space-y-1">
+                  <li>• HIPAA-compliant architecture</li>
+                  <li>• Data never leaves your environment</li>
+                  <li>• Custom security policies</li>
+                  <li>• Integration with existing EHR systems</li>
+                </ul>
+              </div>
+              <div className="bg-green-50 border border-green-200 p-6 rounded-lg">
+                <div className="flex items-center mb-4">
+                  <Lock className="h-6 w-6 text-green-600 mr-3" />
+                  <h3 className="text-xl font-semibold text-green-900">API Integration</h3>
+                </div>
+                <p className="text-green-700 mb-4">
+                  Seamlessly integrate AI intake capabilities into your existing patient portal or workflow systems.
+                </p>
+                <ul className="text-sm text-green-600 space-y-1">
+                  <li>• RESTful API endpoints</li>
+                  <li>• Webhook notifications</li>
+                  <li>• Real-time processing</li>
+                  <li>• Custom branding options</li>
+                </ul>
+              </div>
+            </div>
+            <div className="text-center mt-8">
+              <p className="text-gray-600 mb-4">
+                Ready to explore implementation for your health system?
+              </p>
+              <Button className="bg-teal-500 hover:bg-teal-600 text-white px-8 py-3">
+                Schedule Enterprise Demo
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        {/* About BuildAI Section */}
+        <section className="bg-gray-50 py-16">
+          <div className="container mx-auto px-4 md:px-6">
+            <div className="max-w-3xl mx-auto text-center">
+              <h2 className="text-3xl font-bold mb-6">About BuildAI</h2>
+              <p className="text-xl text-gray-600 mb-8">
+                We are an AI consulting team of technologists and healthcare leaders, dedicated to transforming healthcare delivery through intelligent automation.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
+                <div>
+                  <h3 className="text-lg font-semibold mb-3 text-teal-700">Healthcare Expertise</h3>
+                  <p className="text-gray-600">
+                    Our team combines deep healthcare domain knowledge with cutting-edge AI technology to solve real-world clinical challenges.
+                  </p>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold mb-3 text-teal-700">Enterprise Focus</h3>
+                  <p className="text-gray-600">
+                    We specialize in building secure, scalable AI solutions that integrate seamlessly with existing healthcare infrastructure.
+                  </p>
+                </div>
               </div>
             </div>
           </div>
