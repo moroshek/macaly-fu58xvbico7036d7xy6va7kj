@@ -1,12 +1,16 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback } from "react"; // Removed useState
 import { Badge } from "@/components/ui/badge";
 import { Shield, Lock, Mic, X, Loader2, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import axios from "axios";
+import { useAppState } from "@/hooks/useAppState"; // Import useAppState
+import { useAppLogger } from "@/hooks/useAppLogger"; // Import useAppLogger
+// axios is no longer directly used
 import { UltravoxSession } from 'ultravox-client';
+import { BackendService, InitiateIntakeResponse, SubmitTranscriptResponse } from "@/lib/backend-service"; // Import BackendService
+import { AppError } from "@/lib/error-handler"; // Import AppError
 import DevTray from "@/components/DevTray";
 import VoiceActivityIndicator from "@/components/VoiceActivityIndicator";
 
@@ -18,7 +22,7 @@ import { getConfig, API_ENDPOINTS, UI_STATES, UIState } from "@/lib/config";
 
 // Apply global configuration
 const config = getConfig();
-axios.defaults.timeout = config.ultravoxTimeoutMs;
+// axios.defaults.timeout = config.ultravoxTimeoutMs; // Commented out as BackendService manages its own timeouts and direct axios usage is removed.
 
 export type Utterance = {
   speaker: string;
@@ -60,37 +64,58 @@ const InterviewPulsingAnimation = () => (
 );
 
 export default function MedicalIntakePage() {
-  const [uiState, setUiState] = useState<UIState>(UI_STATES.IDLE);
-  const [uvSession, setUvSession] = useState<any>(null);
-  const [callId, setCallId] = useState<string>("");
-  const [isInterviewActive, setIsInterviewActive] = useState<boolean>(false);
-  const [uvStatus, setUvStatus] = useState<string>("");
-  const [currentTranscript, setCurrentTranscript] = useState<Utterance[]>([]);
-  const [summaryData, setSummaryData] = useState<SummaryData | null>(null);
-  const [analysisData, setAnalysisData] = useState<string | null>(null);
-  const [isOnline, setIsOnline] = useState(true);
-  const [hasAudioPermission, setHasAudioPermission] = useState<boolean | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string>("");
+  const {
+    state,
+    dispatch,
+    setUiState,
+    setSession,
+    setCallId,
+    setInterviewActive,
+    setUvStatus,
+    // addTranscriptItem, // We'll use setTranscript for now as per existing logic
+    setTranscript,
+    setSummaryData,
+    setAnalysisData,
+    setOnline,
+    setAudioPermission,
+    setError,
+    clearError,
+    resetInterview,
+    resetAll: resetAllState, // Renamed to avoid conflict with local resetAll function
+  } = useAppState();
+
+  const { 
+    logClientEvent, 
+    logApiCall, 
+    logUltravoxEvent, 
+    logError, 
+    getClientEvents, 
+    getBackendComms,
+    clearLogs 
+  } = useAppLogger();
+
+  const backendService = BackendService.getInstance(); // Get BackendService instance
 
   const { toast } = useToast();
   const pendingRequestsRef = useRef<number>(0);
 
   // Network setup
   useEffect(() => {
-    setIsOnline(navigator.onLine);
+    setOnline(navigator.onLine);
     const cleanup = setupNetworkListeners(
-      (online) => setIsOnline(online),
+      (online) => setOnline(online),
       async () => {
         try {
           logClientEvent('Network connection restored');
-          const result = await checkApiConnectivity(API_BASE_URL);
+          // checkApiConnectivity might use BackendService.checkHealth() in the future
+          const result = await checkApiConnectivity(API_BASE_URL); 
           if (result.success) {
-            setIsOnline(true);
+            setOnline(true);
             logApiCall('Backend', 'GET /health', 'success', result.status);
           }
         } catch (error) {
           console.warn('API connectivity test failed:', error);
-          logClientEvent(`API connectivity test failed: ${error}`);
+          logError('NetworkSetup-Restored', error); 
           logApiCall('Backend', 'GET /health', 'failed');
         }
       },
@@ -98,250 +123,126 @@ export default function MedicalIntakePage() {
     );
 
     if (navigator.onLine) {
-      checkApiConnectivity(API_BASE_URL)
+      // checkApiConnectivity might use BackendService.checkHealth() in the future
+      checkApiConnectivity(API_BASE_URL) 
         .then(result => {
-          if (result.success) setIsOnline(true);
+          if (result.success) setOnline(true);
           logApiCall('Backend', 'GET /health', result.success ? 'success' : 'failed', result.status);
         })
         .catch(error => {
           console.warn('Initial API connectivity test failed:', error);
-          logClientEvent(`Initial API connectivity test failed: ${error}`);
+          logError('NetworkSetup-Initial', error); 
           logApiCall('Backend', 'GET /health', 'failed');
         });
     }
 
     return cleanup;
-  }, []);
-
-  // CRITICAL FIX: Ultravox event handlers with proper state access
-  useEffect(() => {
-    if (!uvSession) return;
-
-    console.log("🔧 Setting up Ultravox event handlers with current state access");
-
-    const handleStatusChange = (event: any) => {
-      const status = typeof event === 'string' ? event :
-        event?.data || event?.status || uvSession.status || 'unknown';
-
-      logClientEvent(`Ultravox status: ${status}`);
-      setUvStatus(status);
-
-      const activeStates = ['idle', 'listening', 'thinking', 'speaking', 'connected', 'ready', 'active'];
-
-      if (status === 'disconnected') {
-        console.log("🔌 Ultravox session disconnected");
-        setIsInterviewActive(false);
-
-        // Check current state values using functional updates
-        setUiState(currentUiState => {
-          setCurrentTranscript(currentTranscriptState => {
-            if (currentUiState !== 'processing_transcript' &&
-              currentUiState !== 'displaying_results' &&
-              currentTranscriptState.length > 0) {
-              console.log("📤 Auto-submitting transcript after disconnection");
-              setTimeout(() => assembleAndSubmitTranscript(), 500);
-            } else if (currentTranscriptState.length === 0) {
-              setUiState(UI_STATES.IDLE);
-            }
-            return currentTranscriptState;
-          });
-          return currentUiState;
-        });
-      } else if (activeStates.includes(status.toLowerCase())) {
-        setUiState(UI_STATES.INTERVIEWING);
-        setIsInterviewActive(true);
-      }
-    };
-
-    const handleExperimentalMessage = (event: any) => {
-      try {
-        const message = event?.data || event;
-        console.log("🔧 Experimental message received:", message);
-
-        if (message && typeof message === 'object') {
-          const messageStr = JSON.stringify(message).toLowerCase();
-
-          const hangupIndicators = [
-            'hangup', 'hang_up', 'hang-up',
-            '"toolname":"hangup"', '"name":"hangup"',
-            '"tool_name":"hangup"', '"function":"hangup"'
-          ];
-
-          const foundHangup = hangupIndicators.some(indicator => messageStr.includes(indicator));
-
-          if (foundHangup) {
-            console.log("🚨 DETECTED HANGUP TOOL CALL - Agent wants to end call!");
-            logClientEvent("🚨 Agent invoked hangUp tool - ending interview automatically");
-
-            setTimeout(() => {
-              setUiState(currentUiState => {
-                setIsInterviewActive(currentActiveState => {
-                  if (currentUiState === 'interviewing' && currentActiveState) {
-                    console.log("🔚 Auto-ending interview due to hangUp tool call");
-                    handleEndInterview();
-                  }
-                  return currentActiveState;
-                });
-                return currentUiState;
-              });
-            }, 2000);
-            return;
-          }
-
-          const completionIndicators = [
-            'interview complete', 'interview is complete',
-            'thank you for completing', 'that concludes',
-            'all done', 'finished with questions'
-          ];
-
-          const foundCompletion = completionIndicators.some(indicator => messageStr.includes(indicator));
-
-          if (foundCompletion) {
-            console.log("✅ DETECTED COMPLETION PHRASE in experimental message");
-            logClientEvent("✅ Agent indicated interview completion");
-
-            setTimeout(() => {
-              setUiState(currentUiState => {
-                setIsInterviewActive(currentActiveState => {
-                  if (currentUiState === 'interviewing' && currentActiveState) {
-                    console.log("🔚 Auto-ending interview due to completion phrase");
-                    handleEndInterview();
-                  }
-                  return currentActiveState;
-                });
-                return currentUiState;
-              });
-            }, 3000);
-          }
-        }
-      } catch (err) {
-        console.error("❌ Error processing experimental message:", err);
-      }
-    };
-
-    try {
-      uvSession.addEventListener('status', handleStatusChange);
-      uvSession.addEventListener('experimental_message', handleExperimentalMessage);
-      console.log("✅ Ultravox event listeners added successfully");
-    } catch (error) {
-      console.error("❌ Error adding Ultravox event listeners:", error);
-    }
-
-    return () => {
-      try {
-        uvSession.removeEventListener('status', handleStatusChange);
-        uvSession.removeEventListener('experimental_message', handleExperimentalMessage);
-        console.log("🧹 Ultravox event listeners cleaned up");
-      } catch (error) {
-        console.error("❌ Error removing Ultravox event listeners:", error);
-      }
-    };
-  }, [uvSession]);
+  }, [setOnline, logClientEvent, logApiCall, logError]); 
 
   // Simplified session initialization
-  const initUltravoxSession = async (joinUrl: string) => {
+  // useCallback for initUltravoxSession
+  const initUltravoxSession = useCallback(async (joinUrl: string) => {
     try {
-      logClientEvent("Starting Ultravox initialization");
+      logUltravoxEvent("Starting Ultravox initialization"); // Use logUltravoxEvent
 
       if (typeof UltravoxSession !== 'function') {
+        logError('InitUltravox', new Error("UltravoxSession is not available"));
         throw new Error("UltravoxSession is not available - check import");
       }
 
       try {
         const wsTestResult = await testWebSocketConnection(joinUrl);
         if (!wsTestResult) {
-          logClientEvent("WebSocket connectivity test failed");
+          logUltravoxEvent("WebSocket connectivity test failed");
         }
       } catch (wsError) {
         console.warn("WebSocket test failed but continuing:", wsError);
-        logClientEvent(`WebSocket test failed: ${wsError}`);
+        logError('InitUltravox-WSTest', wsError);
       }
 
-      logClientEvent("Initializing Ultravox session");
+      logUltravoxEvent("Initializing Ultravox session");
 
       const session = new UltravoxSession({
         experimentalMessages: true as any
       });
 
       // Enhanced transcript handler
-      const handleTranscript = (event: any) => {
+      const handleTranscriptEvent = (event: any) => { 
         try {
           console.log("📝 Transcript event received:", event);
 
           if (session.transcripts && Array.isArray(session.transcripts)) {
-            setCurrentTranscript(prev => {
-              const newTranscripts = session.transcripts.filter((transcript: any) => {
-                return transcript &&
-                  typeof transcript.text === 'string' &&
-                  transcript.text.trim() !== '' &&
-                  transcript.isFinal !== false;
-              });
-
-              if (newTranscripts.length > prev.length) {
-                console.log(`📝 Found ${newTranscripts.length - prev.length} new transcripts`);
-                return newTranscripts.map((transcript: any) => ({
-                  speaker: transcript.speaker === 'user' ? 'user' : 'agent',
-                  text: transcript.text.trim()
-                }));
-              }
-              return prev;
+            const newTranscripts = session.transcripts.filter((transcript: any) => {
+              return transcript &&
+                typeof transcript.text === 'string' &&
+                transcript.text.trim() !== '' &&
+                transcript.isFinal !== false;
             });
+
+            // Check against the latest state via dispatch's functional update or by re-accessing state if possible
+            // For simplicity here, we assume `state.currentTranscript` is reasonably up-to-date
+            // or this handler is memoized with `state.currentTranscript.length` if it were outside.
+            // However, since `setTranscript` comes from `useAppState`, it's already stable.
+            if (newTranscripts.length > state.currentTranscript.length) {
+              logUltravoxEvent(`Found ${newTranscripts.length - state.currentTranscript.length} new transcripts`);
+              setTranscript(newTranscripts.map((transcript: any) => ({ 
+                speaker: transcript.speaker === 'user' ? 'user' : 'agent',
+                text: transcript.text.trim()
+              })));
+            }
           }
         } catch (err) {
-          console.error("❌ Error processing transcript:", err);
+          logError('HandleTranscriptEvent', err);
         }
       };
 
-      const handleError = (event: any) => {
+      const handleErrorEvent = (event: any) => { 
         const errorObj = event?.error || event;
-        console.error("❌ Ultravox error:", errorObj);
-        setErrorMessage(errorObj?.message || "There was a problem with the interview connection.");
-        setUiState(UI_STATES.ERROR);
+        logError('UltravoxSessionError', errorObj);
+        setError(errorObj?.message || "There was a problem with the interview connection."); 
       };
 
-      session.addEventListener('transcripts', handleTranscript);
-      session.addEventListener('error', handleError);
+      session.addEventListener('transcripts', handleTranscriptEvent);
+      session.addEventListener('error', handleErrorEvent);
 
-      console.log("🔗 Joining Ultravox call...");
+      logUltravoxEvent("Joining Ultravox call...");
       await session.joinCall(joinUrl);
-      console.log("✅ Successfully joined Ultravox call");
-      logClientEvent("Successfully joined Ultravox call");
+      logUltravoxEvent("Successfully joined Ultravox call");
 
-      setUvSession(session);
-      setUiState('interviewing');
-      setIsInterviewActive(true);
+      setSession(session); 
+      setUiState('interviewing'); 
+      setInterviewActive(true); 
 
       try {
         if (typeof session.unmuteMic === 'function') {
           session.unmuteMic();
-          console.log("🎤 Microphone unmuted");
+          logUltravoxEvent("Microphone unmuted");
         }
       } catch (micError) {
-        console.error("❌ Error unmuting microphone:", micError);
+        logError('UnmuteMic', micError);
       }
 
       return true;
     } catch (error: any) {
-      console.error("❌ Error initializing Ultravox session:", error);
-      setErrorMessage(error?.message || "Could not connect to the interview service. Please try again.");
+      logError('InitUltravox-OuterCatch', error);
+      setError(error?.message || "Could not connect to the interview service. Please try again."); 
       toast({
         title: "Connection Error",
         description: error?.message || "Could not connect to the interview service. Please try again.",
         variant: "destructive"
       });
-      setUiState(UI_STATES.ERROR);
       return false;
     }
-  };
+  }, [state.currentTranscript.length, setError, setSession, setUiState, setInterviewActive, setTranscript, toast, logUltravoxEvent, logError]);
 
-  const handleStartInterview = async () => {
-    setSummaryData(null);
-    setAnalysisData(null);
-    setCurrentTranscript([]);
-    setErrorMessage("");
+  const handleStartInterview = useCallback(async () => {
+    setSummaryData(null); 
+    setAnalysisData(null); 
+    setTranscript([]); 
+    clearError(); 
 
-    if (!navigator.onLine) {
-      setErrorMessage("No internet connection. Please check your connection and try again.");
+    if (!state.isOnline) { 
+      setError("No internet connection. Please check your connection and try again.");
       toast({
         title: "No Internet Connection",
         description: "Please check your connection and try again.",
@@ -353,8 +254,8 @@ export default function MedicalIntakePage() {
     try {
       const browserCompatibility = checkBrowserCompatibility();
       if (!browserCompatibility.compatible) {
-        logClientEvent(`Browser compatibility issues: ${browserCompatibility.issues.join(', ')}`);
-        setErrorMessage("Your browser doesn't support all required features. Please try a modern browser like Chrome, Edge, or Safari.");
+          logError('BrowserCompatibility', new Error(`Browser compatibility issues: ${browserCompatibility.issues.join(', ')}`));
+        setError("Your browser doesn't support all required features. Please try a modern browser like Chrome, Edge, or Safari.");
         toast({
           title: "Browser Compatibility Issue",
           description: "Your browser doesn't support all required features. Please try a modern browser.",
@@ -364,14 +265,14 @@ export default function MedicalIntakePage() {
       }
     } catch (error) {
       console.warn("Browser compatibility check failed:", error);
-      logClientEvent(`Browser compatibility check failed: ${error}`);
+      logError('BrowserCompatibilityCheck', error);
     }
 
     try {
       logClientEvent("Testing network connectivity to required services");
       const networkOk = await testNetworkConnectivity();
       if (!networkOk) {
-        setErrorMessage("Cannot reach required services. Please check your internet connection or try again later.");
+        setError("Cannot reach required services. Please check your internet connection or try again later.");
         toast({
           title: "Network Connectivity Issue",
           description: "Cannot reach required services. Please check your connection or try again later.",
@@ -381,7 +282,7 @@ export default function MedicalIntakePage() {
       }
     } catch (error) {
       console.warn("Network connectivity test failed:", error);
-      logClientEvent(`Network connectivity test failed: ${error}`);
+      logError('NetworkConnectivityTest', error);
     }
 
     try {
@@ -403,13 +304,12 @@ export default function MedicalIntakePage() {
       }
 
       if (hasPermission) {
-        setHasAudioPermission(true);
+        setAudioPermission(true);
         logClientEvent("Microphone permission granted");
       } else {
-        setHasAudioPermission(false);
-        setErrorMessage(errorMsg);
-        logClientEvent(`Microphone permission error: ${errorMsg}`);
-        setUiState(UI_STATES.ERROR);
+        setAudioPermission(false);
+        setError(errorMsg); 
+        logError('MicrophonePermission', new Error(errorMsg));
         toast({
           title: "Microphone Access Required",
           description: errorMsg,
@@ -424,140 +324,66 @@ export default function MedicalIntakePage() {
       pendingRequestsRef.current++;
 
       try {
-        logClientEvent("Calling initiate-intake API");
-        const response = await axios.post(`${API_BASE_URL}${API_ENDPOINTS.INITIATE_INTAKE}`, {});
-        logApiCall('Backend', 'POST /api/v1/initiate-intake', 'success', response.status);
+        logClientEvent("Calling initiate-intake API with BackendService");
+        const response: InitiateIntakeResponse = await backendService.initiateIntake();
+        // logApiCall is handled by BackendService interceptor for success/failure at transport layer
+        // App-level logging of success should be based on business logic if needed
 
-        const { joinUrl, callId: newCallId } = response.data;
-        if (!joinUrl || !newCallId) {
-          logClientEvent("Invalid response - missing joinUrl or callId");
-          throw new Error("Invalid response from server. Missing joinUrl or callId.");
-        }
+        const { joinUrl, callId: newCallId } = response;
+        // Validation of joinUrl and newCallId is done within BackendService
 
-        setCallId(newCallId);
+        setCallId(newCallId); 
         logClientEvent(`Call ID received: ${newCallId.substring(0, 8)}...`);
 
         const success = await initUltravoxSession(joinUrl);
         if (!success) {
-          logClientEvent("Failed to initialize Ultravox session");
+          // Error already logged by initUltravoxSession
           throw new Error("Failed to initialize interview session.");
         }
 
         logClientEvent("Interview started successfully");
-      } catch (apiError) {
-        console.error("Error with API or session:", apiError);
-        logClientEvent(`API/session error: ${apiError instanceof Error ? apiError.message : 'Unknown error'}`);
-
-        let errorMessage = "An unexpected error occurred. Please try again.";
-        if (apiError instanceof Error && apiError.message) {
-          errorMessage = apiError.message;
-        } else if (axios.isAxiosError(apiError)) {
-          if (!apiError.response) {
-            errorMessage = "Could not connect to the server. Please check your internet connection.";
-          } else {
-            errorMessage = `Server error (${apiError.response.status}). Please try again later.`;
-          }
-          logApiCall('Backend', 'POST /api/v1/initiate-intake', 'failed', apiError.response?.status);
-        }
-
-        setErrorMessage(errorMessage);
+      } catch (error) { // This will catch AppError from BackendService or other errors
+        const appError = error instanceof AppError ? error : new AppError( (error as Error).message || "Unknown error during start interview", "START_INTERVIEW_CATCH_ALL", "unknown");
+        logError('HandleStartInterview-ApiCatch', appError);
+        
+        setError(appError.userMessage || appError.message); 
         toast({
           title: "Interview Error",
-          description: errorMessage,
+          description: appError.userMessage || appError.message,
           variant: "destructive"
         });
-        setUiState(UI_STATES.ERROR);
       } finally {
         pendingRequestsRef.current = Math.max(0, pendingRequestsRef.current - 1);
       }
 
-    } catch (error: any) {
-      console.error("Error starting interview:", error);
-      logClientEvent(`Error starting interview: ${error.message || 'Unknown error'}`);
-
-      setErrorMessage("Failed to start interview. Please try again.");
+    } catch (error: any) { // Catch errors from permission checks etc.
+      const appError = error instanceof AppError ? error : new AppError( (error as Error).message || "Unknown error during start interview outer", "START_INTERVIEW_OUTER_CATCH_ALL", "unknown");
+      logError('HandleStartInterview-OuterCatch', appError);
+      setError(appError.userMessage || "Failed to start interview. Please try again."); 
       toast({
         title: "Interview Error",
-        description: "Failed to start interview. Please try again.",
+        description: appError.userMessage || "Failed to start interview. Please try again.",
         variant: "destructive"
       });
-      setUiState(UI_STATES.ERROR);
     }
-  };
+  }, [
+    state.isOnline, initUltravoxSession, clearError, setSummaryData, setAnalysisData, setTranscript, 
+    setError, setUiState, setAudioPermission, setCallId, toast, logClientEvent, logError, backendService // Added backendService
+  ]);
 
-  const handleEndInterview = async () => {
-    if (uiState === 'processing_transcript' || uiState === 'displaying_results') {
-      console.log("⚠️ Already processing or displaying results. Ignoring duplicate call.");
-      return;
-    }
-
-    console.log("🔚 ENDING INTERVIEW - Starting transcript submission to Cloud Run");
-    logClientEvent("Ending interview and preparing transcript for Cloud Run backend");
-    setIsInterviewActive(false);
-
-    try {
-      if (uvSession && typeof uvSession.leaveCall === 'function') {
-        console.log("📞 Calling uvSession.leaveCall()...");
-        await uvSession.leaveCall();
-        console.log("✅ Successfully left Ultravox call");
-      }
-    } catch (error) {
-      console.error("❌ Error leaving Ultravox call:", error);
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    console.log(`📊 Current transcript length: ${currentTranscript.length}`);
-    if (currentTranscript.length > 0) {
-      console.log("📝 Transcript preview:");
-      currentTranscript.slice(0, 3).forEach((item, index) => {
-        console.log(`  ${index + 1}. ${item.speaker}: "${item.text.substring(0, 50)}..."`);
-      });
-
-      console.log("🚀 SENDING TRANSCRIPT TO CLOUD RUN BACKEND");
-      console.log(`🏁 Target: ${API_BASE_URL}${API_ENDPOINTS.SUBMIT_TRANSCRIPT}`);
-      await assembleAndSubmitTranscript();
-    } else {
-      if (uvSession && uvSession.transcripts && Array.isArray(uvSession.transcripts) && uvSession.transcripts.length > 0) {
-        console.log("📝 Using session transcripts as fallback");
-        const sessionTranscripts = uvSession.transcripts
-          .filter((t: any) => t && t.text && typeof t.text === 'string')
-          .map((t: any) => ({
-            speaker: t.speaker === 'user' ? 'user' : 'agent',
-            text: t.text.trim()
-          }));
-
-        if (sessionTranscripts.length > 0) {
-          setCurrentTranscript(sessionTranscripts);
-          console.log("🚀 SENDING SESSION TRANSCRIPT TO CLOUD RUN");
-          await assembleAndSubmitTranscript();
-          return;
-        }
-      }
-
-      console.log("❌ No transcript data found");
-      setErrorMessage("No conversation data was recorded. Please try starting a new interview.");
-      toast({
-        title: "Interview Ended",
-        description: "No conversation data was recorded. Please try starting a new interview."
-      });
-      setUiState('idle');
-    }
-  };
-
-  const assembleAndSubmitTranscript = async () => {
-    if (uiState === 'processing_transcript' || uiState === 'displaying_results') {
-      console.log("⚠️ Already processing transcript, ignoring duplicate call");
+  const assembleAndSubmitTranscript = useCallback(async () => {
+    if (state.uiState === 'processing_transcript' || state.uiState === 'displaying_results') {
+      logClientEvent("Already processing transcript, ignoring duplicate call to assembleAndSubmitTranscript");
       return;
     }
 
     logClientEvent("Starting transcript submission");
 
-    setSummaryData(null);
-    setAnalysisData(null);
-    setUiState(UI_STATES.PROCESSING_TRANSCRIPT);
+    setSummaryData(null); 
+    setAnalysisData(null); 
+    setUiState(UI_STATES.PROCESSING_TRANSCRIPT); 
 
-    const validTranscript = currentTranscript.filter(utterance => {
+    const validTranscript = state.currentTranscript.filter(utterance => { 
       return utterance &&
         typeof utterance.speaker === 'string' &&
         typeof utterance.text === 'string' &&
@@ -566,26 +392,24 @@ export default function MedicalIntakePage() {
     });
 
     if (validTranscript.length === 0) {
-      logClientEvent("No valid transcript data to submit");
-      setErrorMessage("No conversation data was recorded.");
+      logError('SubmitTranscript', new Error("No valid transcript data to submit"));
+      setError("No conversation data was recorded."); 
       toast({
         title: "Missing Data",
         description: "No conversation data was recorded.",
         variant: "destructive"
       });
-      setUiState(UI_STATES.ERROR);
       return;
     }
 
-    if (!callId || callId.trim().length === 0) {
-      logClientEvent("Missing or invalid call ID");
-      setErrorMessage("Missing call identifier.");
+    if (!state.callId || state.callId.trim().length === 0) { 
+      logError('SubmitTranscript', new Error("Missing or invalid call ID"));
+      setError("Missing call identifier."); 
       toast({
         title: "Missing Identifier",
         description: "Missing call identifier.",
         variant: "destructive"
       });
-      setUiState(UI_STATES.ERROR);
       return;
     }
 
@@ -596,14 +420,13 @@ export default function MedicalIntakePage() {
       }).join('\n');
 
       if (fullTranscript.length < 10) {
-        logClientEvent("Transcript too short to be meaningful");
-        setErrorMessage("Conversation too short to process. Please have a longer conversation.");
+        logError('SubmitTranscript', new Error("Transcript too short"));
+        setError("Conversation too short to process. Please have a longer conversation."); 
         toast({
           title: "Insufficient Data",
           description: "Conversation too short to process. Please have a longer conversation.",
           variant: "destructive"
         });
-        setUiState(UI_STATES.ERROR);
         return;
       }
 
@@ -611,77 +434,29 @@ export default function MedicalIntakePage() {
       logClientEvent(`Transcript preview: ${fullTranscript.substring(0, 200)}...`);
 
       pendingRequestsRef.current++;
+      
+      logClientEvent("Calling submit-transcript API with BackendService");
+      const response: SubmitTranscriptResponse = await backendService.submitTranscript(state.callId, fullTranscript);
+      // logApiCall for success/failure is handled by BackendService interceptor
 
-      const payload = {
-        callId: callId.trim(),
-        transcript: fullTranscript
-      };
+      // Validation and normalization of summary is now done within BackendService
+      const { summary, analysis } = response;
 
-      logClientEvent("Sending POST request to submit-transcript endpoint");
-      logApiCall('Backend', 'POST /api/v1/submit-transcript', 'pending');
-
-      const response = await axios.post(
-        `${API_BASE_URL}${API_ENDPOINTS.SUBMIT_TRANSCRIPT}`,
-        payload,
-        {
-          timeout: config.transcriptSubmissionTimeoutMs,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Request-ID': `${callId}-${Date.now()}`
-          }
-        }
-      );
-
-      logApiCall('Backend', 'POST /api/v1/submit-transcript', 'success', response.status);
-      logClientEvent(`Backend response received: ${response.status}`);
-
-      if (!response.data) {
-        throw new Error("Empty response from server");
-      }
-
-      const { summary, analysis } = response.data;
-
-      if (!summary && !analysis) {
-        logClientEvent("Invalid response - missing both summary and analysis");
-        throw new Error("Invalid response from server. Missing summary and analysis data.");
-      }
-
-      if (summary) {
-        const requiredFields = ['chiefComplaint', 'historyOfPresentIllness', 'associatedSymptoms',
-          'pastMedicalHistory', 'medications', 'allergies', 'notesOnInteraction'];
-        const missingFields = requiredFields.filter(field => !(field in summary));
-
-        if (missingFields.length > 0) {
-          logClientEvent(`Summary missing fields: ${missingFields.join(', ')}`);
-          missingFields.forEach(field => {
-            summary[field] = null;
-          });
-        }
-      }
-
-      const validatedSummary = summary ? {
-        chiefComplaint: summary.chiefComplaint || null,
-        historyOfPresentIllness: summary.historyOfPresentIllness || null,
-        associatedSymptoms: summary.associatedSymptoms || null,
-        pastMedicalHistory: summary.pastMedicalHistory || null,
-        medications: summary.medications || null,
-        allergies: summary.allergies || null,
-        notesOnInteraction: summary.notesOnInteraction || null
-      } as SummaryData : null;
-
+      const validatedSummary = summary; // Already validated by BackendService
       const validatedAnalysis = analysis && typeof analysis === 'string' && analysis.trim().length > 0
         ? analysis.trim()
         : null;
 
+
       logClientEvent("Setting processed summary and analysis data");
-      logClientEvent(`Summary fields present: ${validatedSummary ? Object.keys(validatedSummary).filter(k => validatedSummary[k] !== null).length : 0}`);
+      logClientEvent(`Summary fields present: ${validatedSummary ? Object.keys(validatedSummary).filter(k => validatedSummary && validatedSummary[k] !== null).length : 0}`);
       logClientEvent(`Analysis length: ${validatedAnalysis ? validatedAnalysis.length : 0} chars`);
 
       if (validatedSummary) {
-        setSummaryData(validatedSummary);
+        setSummaryData(validatedSummary); 
       }
       if (validatedAnalysis) {
-        setAnalysisData(validatedAnalysis);
+        setAnalysisData(validatedAnalysis); 
       }
 
       toast({
@@ -691,34 +466,25 @@ export default function MedicalIntakePage() {
 
       setTimeout(() => {
         logClientEvent("Transitioning to results display");
-        setUiState(UI_STATES.DISPLAYING_RESULTS);
+        setUiState(UI_STATES.DISPLAYING_RESULTS); 
       }, 500);
 
-    } catch (error: any) {
-      logClientEvent(`Error submitting transcript: ${error.message || 'Unknown error'}`);
-      logApiCall('Backend', 'POST /api/v1/submit-transcript', 'failed', error.response?.status);
+    } catch (error) { // This will catch AppError from BackendService or other errors
+      const appError = error instanceof AppError ? error : new AppError( (error as Error).message || "Unknown error during submit transcript", "SUBMIT_TRANSCRIPT_CATCH_ALL", "unknown");
+      logError('SubmitTranscript-Catch', appError); 
 
-      console.error("❌ Transcript submission error:", error);
-
-      let errorMessage = "There was an issue processing your interview.";
+      let errorMessageText = appError.userMessage || appError.message;
       let shouldShowFallback = false;
 
-      if (axios.isAxiosError(error)) {
-        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-          errorMessage = "Processing timed out. The server may be overloaded. Please try again.";
-        } else if (!error.response) {
-          errorMessage = "Could not connect to the processing server. Please check your internet connection.";
-        } else if (error.response.status >= 500) {
-          errorMessage = "Server error during processing. Please try again later.";
+      // Check if the error category or a specific code indicates a server error where fallback might be useful
+      if (appError.category === 'api' && appError.code === 'SERVER_ERROR') {
           shouldShowFallback = true;
-        } else if (error.response.status === 400) {
-          errorMessage = "Invalid interview data. Please start a new interview.";
-        } else {
-          errorMessage = `Processing error (${error.response.status}). Please try again.`;
-        }
-      } else if (error.message) {
-        errorMessage = error.message;
       }
+      // Add more specific conditions if BackendService provides more granular error codes for timeouts, etc.
+      if (appError.message.includes('timeout')) { // Example for timeout
+        errorMessageText = "Processing timed out. The server may be overloaded. Please try again.";
+      }
+
 
       if (shouldShowFallback && validTranscript.length > 0) {
         logClientEvent("Showing fallback data due to server error");
@@ -730,14 +496,14 @@ export default function MedicalIntakePage() {
           pastMedicalHistory: null,
           medications: null,
           allergies: null,
-          notesOnInteraction: `Processing failed at ${new Date().toISOString()}. Error: ${errorMessage}`
+          notesOnInteraction: `Processing failed at ${new Date().toISOString()}. Error: ${errorMessageText}` 
         };
 
-        setSummaryData(fallbackSummary);
-        setAnalysisData("Technical processing error occurred. Please retry the interview for complete analysis.");
+        setSummaryData(fallbackSummary); 
+        setAnalysisData("Technical processing error occurred. Please retry the interview for complete analysis."); 
 
         setTimeout(() => {
-          setUiState(UI_STATES.DISPLAYING_RESULTS);
+          setUiState(UI_STATES.DISPLAYING_RESULTS); 
           toast({
             title: "Partial Results Available",
             description: "Processing failed but your conversation was recorded. Please try again for full analysis.",
@@ -745,11 +511,10 @@ export default function MedicalIntakePage() {
           });
         }, 500);
       } else {
-        setErrorMessage(errorMessage);
-        setUiState(UI_STATES.ERROR);
+        setError(errorMessageText); 
         toast({
           title: "Processing Failed",
-          description: errorMessage,
+          description: errorMessageText, 
           variant: "destructive"
         });
       }
@@ -757,54 +522,229 @@ export default function MedicalIntakePage() {
     } finally {
       pendingRequestsRef.current = Math.max(0, pendingRequestsRef.current - 1);
     }
-  };
+  }, [
+    state.uiState, state.currentTranscript, state.callId, 
+    setSummaryData, setAnalysisData, setUiState, setError, toast, logClientEvent, logError, backendService // Added backendService
+  ]);
 
-  const resetAll = () => {
-    console.log("Resetting application state");
-    if (uvSession) {
+  const handleEndInterview = useCallback(async () => {
+    if (state.uiState === 'processing_transcript' || state.uiState === 'displaying_results') {
+      logClientEvent("Already processing or displaying results, ignoring duplicate call to handleEndInterview");
+      return;
+    }
+
+    logClientEvent("Ending interview and preparing transcript for Cloud Run backend");
+    setInterviewActive(false); 
+
+    try {
+      if (state.uvSession && typeof state.uvSession.leaveCall === 'function') {
+        logUltravoxEvent("Calling uvSession.leaveCall()");
+        await state.uvSession.leaveCall();
+        logUltravoxEvent("Successfully left Ultravox call");
+      }
+    } catch (error) {
+      logError('LeaveCall', error);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1000)); 
+
+    logClientEvent(`Current transcript length: ${state.currentTranscript.length}`);
+    if (state.currentTranscript.length > 0) {
+      logClientEvent("Transcript preview:");
+      state.currentTranscript.slice(0, 3).forEach((item, index) => {
+        logClientEvent(`  ${index + 1}. ${item.speaker}: "${item.text.substring(0, 50)}..."`);
+      });
+
+      logClientEvent("Sending transcript to Cloud Run backend");
+      logClientEvent(`Target: ${API_BASE_URL}${API_ENDPOINTS.SUBMIT_TRANSCRIPT}`);
+      await assembleAndSubmitTranscript();
+    } else {
+      if (state.uvSession && state.uvSession.transcripts && Array.isArray(state.uvSession.transcripts) && state.uvSession.transcripts.length > 0) {
+        logClientEvent("Using session transcripts as fallback");
+        const sessionTranscripts = state.uvSession.transcripts
+          .filter((t: any) => t && t.text && typeof t.text === 'string')
+          .map((t: any) => ({
+            speaker: t.speaker === 'user' ? 'user' : 'agent',
+            text: t.text.trim()
+          }));
+
+        if (sessionTranscripts.length > 0) {
+          setTranscript(sessionTranscripts); 
+          logClientEvent("Sending session transcript to Cloud Run");
+          await assembleAndSubmitTranscript(); 
+          return;
+        }
+      }
+
+      logError('EndInterview', new Error("No transcript data found"));
+      setError("No conversation data was recorded. Please try starting a new interview."); 
+      toast({
+        title: "Interview Ended",
+        description: "No conversation data was recorded. Please try starting a new interview."
+      });
+      setUiState('idle'); 
+    }
+  }, [
+    state.uiState, state.uvSession, state.currentTranscript, 
+    setInterviewActive, setTranscript, assembleAndSubmitTranscript, setError, setUiState, toast,
+    logClientEvent, logUltravoxEvent, logError
+  ]);
+
+
+  // CRITICAL FIX: Ultravox event handlers with proper state access
+  useEffect(() => {
+    if (!state.uvSession) return;
+
+    // logUltravoxEvent("Setting up Ultravox event handlers"); // Already logged by the hook itself if desired
+
+    const handleStatusChange = (event: any) => {
+      const status = typeof event === 'string' ? event :
+        event?.data || event?.status || state.uvSession.status || 'unknown';
+
+      logUltravoxEvent(`Status change: ${status}`); // This specific log is good
+      setUvStatus(status);
+
+      const activeStates = ['idle', 'listening', 'thinking', 'speaking', 'connected', 'ready', 'active'];
+
+      if (status === 'disconnected') {
+        logUltravoxEvent("Session disconnected");
+        setInterviewActive(false);
+
+        if (state.uiState !== 'processing_transcript' &&
+            state.uiState !== 'displaying_results' &&
+            state.currentTranscript.length > 0) {
+          logClientEvent("Auto-submitting transcript after disconnection"); // This specific log is good
+          setTimeout(() => assembleAndSubmitTranscript(), 500);
+        } else if (state.currentTranscript.length === 0) {
+          setUiState(UI_STATES.IDLE);
+        }
+      } else if (activeStates.includes(status.toLowerCase())) {
+        setUiState(UI_STATES.INTERVIEWING);
+        setInterviewActive(true);
+      }
+    };
+
+    const handleExperimentalMessage = (event: any) => {
       try {
-        uvSession.leaveCall();
+        const message = event?.data || event;
+        // logUltravoxEvent("Experimental message received", message); // Already logged by the hook, or too verbose. User-level logClientEvent below is better.
+
+        if (message && typeof message === 'object') {
+          const messageStr = JSON.stringify(message).toLowerCase();
+
+          const hangupIndicators = [
+            'hangup', 'hang_up', 'hang-up',
+            '"toolname":"hangup"', '"name":"hangup"',
+            '"tool_name":"hangup"', '"function":"hangup"'
+          ];
+
+          const foundHangup = hangupIndicators.some(indicator => messageStr.includes(indicator));
+
+          if (foundHangup) {
+            logClientEvent("Hangup tool call detected in experimental message - ending interview"); // More specific client event
+            setTimeout(() => {
+              if (state.uiState === 'interviewing' && state.isInterviewActive) {
+                logClientEvent("Auto-ending interview due to hangUp tool call");
+                handleEndInterview(); 
+              }
+            }, 2000);
+            return;
+          }
+
+          const completionIndicators = [
+            'interview complete', 'interview is complete',
+            'thank you for completing', 'that concludes',
+            'all done', 'finished with questions'
+          ];
+
+          const foundCompletion = completionIndicators.some(indicator => messageStr.includes(indicator));
+
+          if (foundCompletion) {
+            logClientEvent("Completion phrase detected in experimental message - ending interview"); // More specific client event
+            setTimeout(() => {
+              if (state.uiState === 'interviewing' && state.isInterviewActive) {
+                logClientEvent("Auto-ending interview due to completion phrase");
+                handleEndInterview(); 
+              }
+            }, 3000);
+          }
+        }
+      } catch (err) {
+        logError('HandleExperimentalMessage', err);
+      }
+    };
+
+    try {
+      state.uvSession.addEventListener('status', handleStatusChange);
+      state.uvSession.addEventListener('experimental_message', handleExperimentalMessage);
+      logUltravoxEvent("Ultravox event listeners added successfully"); // This is a good specific log
+    } catch (error) {
+      logError('AddUltravoxListeners', error);
+    }
+
+    return () => {
+      try {
+        state.uvSession.removeEventListener('status', handleStatusChange);
+        state.uvSession.removeEventListener('experimental_message', handleExperimentalMessage);
+        logUltravoxEvent("Ultravox event listeners cleaned up"); // This is a good specific log
       } catch (error) {
-        console.error("Error leaving call during reset:", error);
+        logError('RemoveUltravoxListeners', error);
+      }
+    };
+  }, [
+    state.uvSession, 
+    state.uiState, 
+    state.isInterviewActive, 
+    state.currentTranscript.length, 
+    setUvStatus, 
+    setInterviewActive, 
+    setUiState, 
+    assembleAndSubmitTranscript, 
+    handleEndInterview,
+    logClientEvent, 
+    logUltravoxEvent, 
+    logError 
+  ]);
+
+
+  const resetAllLocal = () => { 
+    logClientEvent("Resetting application state (local function)");
+    if (state.uvSession) { 
+      try {
+        state.uvSession.leaveCall();
+      } catch (error) {
+        logError('ResetLeaveCall', error);
       }
     }
-    setUvSession(null);
-    setCallId("");
-    setIsInterviewActive(false);
-    setUvStatus("");
-    setCurrentTranscript([]);
-    setSummaryData(null);
-    setAnalysisData(null);
-    setErrorMessage("");
-    setUiState('idle');
+    resetAllState(); 
+    clearLogs(); 
   };
 
   const resetAllAndStartNew = () => {
-    console.log("Starting new interview");
-    resetAll();
+    logClientEvent("Starting new interview via resetAllAndStartNew");
+    resetAllLocal();
     setTimeout(() => handleStartInterview(), 100);
   };
 
   const handleDebugClick = () => {
     try {
       const debugParams = {
-        uvSession: uvSession || null,
-        uvStatus: uvStatus || '',
-        isInterviewActive: Boolean(isInterviewActive),
-        hasAudioPermission: hasAudioPermission,
-        uiState: uiState || 'unknown',
-        currentTranscript: Array.isArray(currentTranscript) ? currentTranscript : [],
-        callId: callId || '',
-        isOnline: Boolean(isOnline),
-        errorMessage: errorMessage || ''
+        uvSession: state.uvSession || null,
+        uvStatus: state.uvStatus || '',
+        isInterviewActive: Boolean(state.isInterviewActive),
+        hasAudioPermission: state.hasAudioPermission,
+        uiState: state.uiState || 'unknown',
+        currentTranscript: Array.isArray(state.currentTranscript) ? state.currentTranscript : [],
+        callId: state.callId || '',
+        isOnline: Boolean(state.isOnline),
+        errorMessage: state.errorMessage || ''
       };
 
-      debugUltravoxState(debugParams);
-      debugAudioState();
-      logClientEvent("Manual debug triggered");
+      debugUltravoxState(debugParams); // This function likely does its own console logging
+      debugAudioState(); // This function likely does its own console logging
+      logClientEvent("Manual debug triggered"); // This is a good specific log
     } catch (error) {
-      console.error('Debug function error:', error);
-      logClientEvent(`Debug function failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      logError('DebugClick', error);
     }
   };
 
@@ -816,7 +756,7 @@ export default function MedicalIntakePage() {
   };
 
   const getStatusText = () => {
-    switch (uiState) {
+    switch (state.uiState) { 
       case 'idle':
         return "Ready to start your medical intake interview";
       case 'requesting_permissions':
@@ -830,78 +770,71 @@ export default function MedicalIntakePage() {
       case 'displaying_results':
         return "Interview complete - review your summary";
       case 'error':
-        return errorMessage || "Error occurred - please try again";
+        return state.errorMessage || "Error occurred - please try again"; 
       default:
         return "Loading...";
     }
   };
 
-  // Logging utilities
-  const clientEventsLog = useRef<string[]>([]).current;
-  const logClientEvent = (event: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    const logEntry = `${timestamp}: ${event}`;
-    console.log(logEntry);
-    clientEventsLog.unshift(logEntry);
-    if (clientEventsLog.length > 50) clientEventsLog.pop();
-  };
-
-  const backendCommsLog = useRef<Array<{
-    timestamp: string;
-    serviceTarget: string;
-    method: string;
-    outcome: string;
-    statusCode?: number;
-  }>>([]).current;
-
-  const logApiCall = (target: string, method: string, outcome: string, statusCode?: number) => {
-    const timestamp = new Date().toLocaleTimeString();
-    backendCommsLog.unshift({ timestamp, serviceTarget: target, method, outcome, statusCode });
-    if (backendCommsLog.length > 20) backendCommsLog.pop();
-    console.log(`API Call: ${target} ${method} - ${outcome}${statusCode ? ` (${statusCode})` : ''}`);
-  };
+  // REMOVED Local Logging Utilities:
+  // - clientEventsLog ref
+  // - local logClientEvent function
+  // - backendCommsLog ref
+  // - local logApiCall function
 
   // Development debugging
   useEffect(() => {
     if (process.env.NODE_ENV === 'development') {
       (window as any).debugUltravox = {
         checkState: () => {
-          console.log("Current State:", {
-            uiState,
-            uvStatus,
-            isInterviewActive,
-            hasAudioPermission,
-            transcriptLength: currentTranscript.length,
-            callId,
-            isOnline,
-            errorMessage
+          // This console.log is acceptable as it's a specific debug tool output
+          console.log("Current State (via window.debugUltravox.checkState):", {
+            uiState: state.uiState,
+            uvStatus: state.uvStatus,
+            isInterviewActive: state.isInterviewActive,
+            hasAudioPermission: state.hasAudioPermission,
+            transcriptLength: state.currentTranscript.length,
+            callId: state.callId,
+            isOnline: state.isOnline,
+            errorMessage: state.errorMessage
           });
         },
         testMicrophone: async () => {
           try {
             const result = await checkMicrophonePermissions();
-            console.log("Microphone test result:", result);
+            logClientEvent("Debug - Microphone test result: " + JSON.stringify(result));
             return result;
           } catch (error) {
-            console.error("Microphone test failed:", error);
+            logError('Debug - TestMicrophone', error);
             return false;
           }
         },
         testNetwork: async () => {
           try {
             const result = await testNetworkConnectivity();
-            console.log("Network test result:", result);
+            logClientEvent("Debug - Network test result: " + JSON.stringify(result));
             return result;
           } catch (error) {
-            console.error("Network test failed:", error);
+            logError('Debug - TestNetwork', error);
             return false;
           }
         }
       };
 
-      console.log("🔧 Debug tools available: window.debugUltravox");
+      logClientEvent("Debug tools available: window.debugUltravox"); // This specific log is good
     }
-  }, [uiState, uvStatus, isInterviewActive, hasAudioPermission, currentTranscript.length, callId, isOnline, errorMessage]);
+  }, [
+    state.uiState,
+    state.uvStatus,
+    state.isInterviewActive,
+    state.hasAudioPermission,
+    state.currentTranscript.length,
+    state.callId,
+    state.isOnline,
+    state.errorMessage,
+    logClientEvent, 
+    logError 
+  ]); 
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -923,15 +856,15 @@ export default function MedicalIntakePage() {
             </div>
             <span className="font-semibold text-lg">MedIntake</span>
           </div>
-          {(uiState === 'interviewing' || uiState === 'initiating' || !isOnline) && (
+          {(state.uiState === 'interviewing' || state.uiState === 'initiating' || !state.isOnline) && ( 
             <div className="flex items-center space-x-2">
-              <div className={`w-2 h-2 rounded-full ${!isOnline ? 'bg-red-500 animate-pulse' :
-                uiState === 'initiating' ? 'bg-orange-400 animate-pulse' :
+              <div className={`w-2 h-2 rounded-full ${!state.isOnline ? 'bg-red-500 animate-pulse' : 
+                state.uiState === 'initiating' ? 'bg-orange-400 animate-pulse' : 
                   'bg-green-500'
                 }`} />
               <span className="text-sm text-gray-500">
-                {!isOnline ? 'Connection Lost' :
-                  uiState === 'initiating' ? 'Connecting...' :
+                {!state.isOnline ? 'Connection Lost' : 
+                  state.uiState === 'initiating' ? 'Connecting...' : 
                     'Connected'}
               </span>
             </div>
@@ -940,31 +873,32 @@ export default function MedicalIntakePage() {
       </header>
 
       <VoiceActivityIndicator
-        uvStatus={uvStatus}
-        isInterviewActive={isInterviewActive}
+        uvStatus={state.uvStatus} 
+        isInterviewActive={state.isInterviewActive} 
       />
 
       <DevTray
-        appPhase={uiState}
-        sessionStatus={uvStatus}
-        sessionId={callId}
-        isSessionActive={isInterviewActive}
-        micStatus={uvSession ? 'active' : 'inactive'}
-        utteranceCount={currentTranscript.length}
-        lastUtteranceSource={currentTranscript.length > 0 ? currentTranscript[currentTranscript.length - 1].speaker : null}
-        submittedDataLength={currentTranscript.length > 0 ? currentTranscript.map(u => u.text).join('').length : null}
-        backendCommsLog={backendCommsLog}
-        outputSet1Received={!!summaryData}
-        outputSet1FieldCount={summaryData ? Object.keys(summaryData).filter(k => summaryData[k] !== null).length : null}
-        outputSet2Received={!!analysisData}
-        outputSet2ApproxLength={analysisData ? analysisData.length : null}
-        clientEventsLog={clientEventsLog}
+        appPhase={state.uiState} 
+        sessionStatus={state.uvStatus} 
+        sessionId={state.callId} 
+        isSessionActive={state.isInterviewActive} 
+        micStatus={state.uvSession ? 'active' : 'inactive'} 
+        utteranceCount={state.currentTranscript.length} 
+        lastUtteranceSource={state.currentTranscript.length > 0 ? state.currentTranscript[state.currentTranscript.length - 1].speaker : null} 
+        submittedDataLength={state.currentTranscript.length > 0 ? state.currentTranscript.map(u => u.text).join('').length : null} 
+        backendCommsLog={getBackendComms()} // Use getter for DevTray
+        outputSet1Received={!!state.summaryData} 
+        outputSet1FieldCount={state.summaryData ? Object.keys(state.summaryData).filter(k => state.summaryData && state.summaryData[k] !== null).length : null} 
+        outputSet2Received={!!state.analysisData} 
+        outputSet2ApproxLength={state.analysisData ? state.analysisData.length : null} 
+        clientEventsLog={getClientEvents()} // Use getter for DevTray
       />
 
       <main className="flex-1">
         <section className="container mx-auto py-12 md:py-24 px-4 md:px-6">
           <div className="grid grid-cols-1 gap-12">
             <div className="space-y-6 max-w-2xl mx-auto text-center md:text-left md:mx-0">
+              {/* Static content, no changes needed */}
               <div className="space-y-2">
                 <h1 className="text-4xl md:text-5xl font-bold tracking-tight">
                   Intelligent, Faster Medical Intake
@@ -1014,11 +948,11 @@ export default function MedicalIntakePage() {
                       {getStatusText()}
                     </p>
 
-                    {uiState === 'idle' && (
+                    {state.uiState === 'idle' && ( // Use state.uiState
                       <div className="space-y-6">
                         <button
                           onClick={handleStartInterview}
-                          disabled={hasAudioPermission === false}
+                          disabled={state.hasAudioPermission === false} // Use state.hasAudioPermission
                           className="w-24 h-24 mx-auto bg-teal-500 rounded-full flex items-center justify-center hover:bg-teal-600 transition-colors cursor-pointer disabled:bg-gray-400 disabled:cursor-not-allowed"
                           aria-label="Start Medical Intake"
                         >
@@ -1028,11 +962,11 @@ export default function MedicalIntakePage() {
                           onClick={handleStartInterview}
                           size="lg"
                           className="bg-teal-500 hover:bg-teal-600"
-                          disabled={hasAudioPermission === false}
+                          disabled={state.hasAudioPermission === false} // Use state.hasAudioPermission
                         >
                           Start Medical Intake
                         </Button>
-                        {hasAudioPermission === false && (
+                        {state.hasAudioPermission === false && ( // Use state.hasAudioPermission
                           <p className="text-red-500 text-sm mt-2">
                             Microphone access required to start interview
                           </p>
@@ -1040,7 +974,7 @@ export default function MedicalIntakePage() {
                       </div>
                     )}
 
-                    {uiState === 'requesting_permissions' && (
+                    {state.uiState === 'requesting_permissions' && ( // Use state.uiState
                       <div className="space-y-6">
                         <div className="w-24 h-24 mx-auto bg-orange-100 rounded-full flex items-center justify-center">
                           <Mic size={32} className="text-orange-500 animate-pulse" />
@@ -1052,7 +986,7 @@ export default function MedicalIntakePage() {
                       </div>
                     )}
 
-                    {uiState === 'initiating' && (
+                    {state.uiState === 'initiating' && ( // Use state.uiState
                       <div className="space-y-6">
                         <div className="w-24 h-24 mx-auto bg-teal-100 rounded-full flex items-center justify-center">
                           <Loader2 size={32} className="text-teal-500 animate-spin" />
@@ -1061,12 +995,12 @@ export default function MedicalIntakePage() {
                       </div>
                     )}
 
-                    {uiState === 'interviewing' && (
+                    {state.uiState === 'interviewing' && ( // Use state.uiState
                       <div className="space-y-6">
                         <InterviewPulsingAnimation />
                         <div className="space-y-2">
                           <p className="text-green-600 font-medium">Interview Active</p>
-                          <p className="text-sm text-gray-500">Status: {uvStatus}</p>
+                          <p className="text-sm text-gray-500">Status: {state.uvStatus}</p> {/* Use state.uvStatus */}
                           <Button
                             onClick={handleEndInterview}
                             variant="destructive"
@@ -1078,7 +1012,7 @@ export default function MedicalIntakePage() {
                       </div>
                     )}
 
-                    {uiState === 'processing_transcript' && (
+                    {state.uiState === 'processing_transcript' && ( // Use state.uiState
                       <div className="space-y-6">
                         <div className="w-24 h-24 mx-auto bg-blue-100 rounded-full flex items-center justify-center">
                           <Loader2 size={32} className="text-blue-500 animate-spin" />
@@ -1092,7 +1026,7 @@ export default function MedicalIntakePage() {
                       </div>
                     )}
 
-                    {uiState === 'displaying_results' && (
+                    {state.uiState === 'displaying_results' && ( // Use state.uiState
                       <div className="space-y-6">
                         <div className="w-24 h-24 mx-auto bg-green-100 rounded-full flex items-center justify-center">
                           <CheckCircle size={32} className="text-green-500" />
@@ -1110,41 +1044,42 @@ export default function MedicalIntakePage() {
                       </div>
                     )}
 
-                    {uiState === 'error' && (
+                    {state.uiState === 'error' && ( // Use state.uiState
                       <div className="space-y-6">
                         <div className="w-24 h-24 mx-auto bg-red-100 rounded-full flex items-center justify-center">
                           <X size={32} className="text-red-500" />
                         </div>
                         <div className="space-y-2">
                           <p className="text-red-600 font-medium">Error Occurred</p>
-                          {errorMessage && (
-                            <p className="text-sm text-red-500 px-4">{errorMessage}</p>
+                          {state.errorMessage && ( // Use state.errorMessage
+                            <p className="text-sm text-red-500 px-4">{state.errorMessage}</p> // Use state.errorMessage
                           )}
                           <div className="space-y-2">
                             <Button
-                              onClick={resetAll}
+                              onClick={resetAllLocal} // Use resetAllLocal
                               variant="outline"
                               size="sm"
                             >
                               Try Again
                             </Button>
-                            {hasAudioPermission === false && (
+                            {state.hasAudioPermission === false && ( // Use state.hasAudioPermission
                               <Button
                                 onClick={async () => {
                                   try {
                                     const result = await checkMicrophonePermissions();
                                     const hasPermission = result && typeof result === 'object' ? result.granted : Boolean(result);
                                     if (hasPermission) {
-                                      setHasAudioPermission(true);
+                                      setAudioPermission(true); // Use hook's dispatcher
                                       logClientEvent("Microphone permission granted");
                                     } else {
-                                      setHasAudioPermission(false);
+                                      setAudioPermission(false); // Use hook's dispatcher
                                       const errorMsg = (result && typeof result === 'object' && result.error) || "Microphone access denied";
-                                      setErrorMessage(errorMsg);
+                                      setError(errorMsg); // Use hook's dispatcher
                                       logClientEvent(`Microphone permission error: ${errorMsg}`);
                                     }
                                   } catch (error) {
                                     console.error("Error requesting microphone permission:", error);
+                                    setError("Error requesting microphone permission."); // Use hook's dispatcher
                                   }
                                 }}
                                 variant="outline"
@@ -1158,10 +1093,10 @@ export default function MedicalIntakePage() {
                       </div>
                     )}
 
-                    {currentTranscript.length > 0 && (
+                    {state.currentTranscript.length > 0 && ( // Use state.currentTranscript
                       <div className="mt-6">
                         <p className="text-xs text-gray-500 mb-2">
-                          Conversation: {currentTranscript.length} messages
+                          Conversation: {state.currentTranscript.length} messages {/* Use state.currentTranscript */}
                         </p>
                       </div>
                     )}
@@ -1169,52 +1104,52 @@ export default function MedicalIntakePage() {
                 </div>
               </div>
 
-              <div className={`space-y-8 ${!(uiState === 'processing_transcript' || uiState === 'displaying_results') ? 'opacity-50' : ''}`}>
+              <div className={`space-y-8 ${!(state.uiState === 'processing_transcript' || state.uiState === 'displaying_results') ? 'opacity-50' : ''}`}> {/* Use state.uiState */}
                 <div className="bg-white rounded-lg border shadow-sm">
                   <div className="p-6">
                     <h3 className="text-lg font-semibold mb-4">Medical Summary</h3>
-                    {uiState === 'processing_transcript' ? (
+                    {state.uiState === 'processing_transcript' ? ( // Use state.uiState
                       <div className="space-y-3">
                         <div className="h-4 bg-gray-200 rounded animate-pulse" />
                         <div className="h-4 bg-gray-200 rounded animate-pulse w-3/4" />
                         <div className="h-4 bg-gray-200 rounded animate-pulse w-1/2" />
                       </div>
-                    ) : summaryData ? (
+                    ) : state.summaryData ? ( // Use state.summaryData
                       <div className="space-y-4 text-sm">
-                        {summaryData.chiefComplaint && (
+                        {state.summaryData.chiefComplaint && ( // Use state.summaryData
                           <div>
                             <strong>Chief Complaint:</strong>
-                            <p className="mt-1 text-gray-600">{summaryData.chiefComplaint}</p>
+                            <p className="mt-1 text-gray-600">{state.summaryData.chiefComplaint}</p> {/* Use state.summaryData */}
                           </div>
                         )}
-                        {summaryData.historyOfPresentIllness && (
+                        {state.summaryData.historyOfPresentIllness && ( // Use state.summaryData
                           <div>
                             <strong>History of Present Illness:</strong>
-                            <p className="mt-1 text-gray-600">{summaryData.historyOfPresentIllness}</p>
+                            <p className="mt-1 text-gray-600">{state.summaryData.historyOfPresentIllness}</p> {/* Use state.summaryData */}
                           </div>
                         )}
-                        {summaryData.associatedSymptoms && (
+                        {state.summaryData.associatedSymptoms && ( // Use state.summaryData
                           <div>
                             <strong>Associated Symptoms:</strong>
-                            <p className="mt-1 text-gray-600">{formatSummaryField(summaryData.associatedSymptoms)}</p>
+                            <p className="mt-1 text-gray-600">{formatSummaryField(state.summaryData.associatedSymptoms)}</p> {/* Use state.summaryData */}
                           </div>
                         )}
-                        {summaryData.pastMedicalHistory && (
+                        {state.summaryData.pastMedicalHistory && ( // Use state.summaryData
                           <div>
                             <strong>Past Medical History:</strong>
-                            <p className="mt-1 text-gray-600">{formatSummaryField(summaryData.pastMedicalHistory)}</p>
+                            <p className="mt-1 text-gray-600">{formatSummaryField(state.summaryData.pastMedicalHistory)}</p> {/* Use state.summaryData */}
                           </div>
                         )}
-                        {summaryData.medications && (
+                        {state.summaryData.medications && ( // Use state.summaryData
                           <div>
                             <strong>Medications:</strong>
-                            <p className="mt-1 text-gray-600">{formatSummaryField(summaryData.medications)}</p>
+                            <p className="mt-1 text-gray-600">{formatSummaryField(state.summaryData.medications)}</p> {/* Use state.summaryData */}
                           </div>
                         )}
-                        {summaryData.allergies && (
+                        {state.summaryData.allergies && ( // Use state.summaryData
                           <div>
                             <strong>Allergies:</strong>
-                            <p className="mt-1 text-gray-600">{formatSummaryField(summaryData.allergies)}</p>
+                            <p className="mt-1 text-gray-600">{formatSummaryField(state.summaryData.allergies)}</p> {/* Use state.summaryData */}
                           </div>
                         )}
                       </div>
@@ -1229,16 +1164,16 @@ export default function MedicalIntakePage() {
                 <div className="bg-white rounded-lg border shadow-sm">
                   <div className="p-6">
                     <h3 className="text-lg font-semibold mb-4">Clinical Analysis</h3>
-                    {uiState === 'processing_transcript' ? (
+                    {state.uiState === 'processing_transcript' ? ( // Use state.uiState
                       <div className="space-y-3">
                         <div className="h-4 bg-gray-200 rounded animate-pulse" />
                         <div className="h-4 bg-gray-200 rounded animate-pulse w-4/5" />
                         <div className="h-4 bg-gray-200 rounded animate-pulse w-3/5" />
                         <div className="h-4 bg-gray-200 rounded animate-pulse w-2/3" />
                       </div>
-                    ) : analysisData ? (
+                    ) : state.analysisData ? ( // Use state.analysisData
                       <div className="text-sm text-gray-600">
-                        {analysisData.split('\n').map((paragraph, index) => (
+                        {state.analysisData.split('\n').map((paragraph, index) => ( // Use state.analysisData
                           <p key={index} className="mb-2">
                             {paragraph}
                           </p>
@@ -1256,6 +1191,7 @@ export default function MedicalIntakePage() {
           </div>
         </section>
 
+        {/* Static content sections, no changes needed */}
         <section className="bg-gray-50 py-16">
           <div className="container mx-auto px-4 md:px-6">
             <div className="text-center mb-12">
