@@ -3,6 +3,9 @@
 import { useState, useRef, useEffect } from "react";
 import { Settings, ChevronDown, ChevronUp, X } from "lucide-react";
 
+import React from "react"; // Import React for React.FC
+import { UIState } from "@/lib/config"; // Import UIState
+
 // Define prop types for the DevTray component
 type BackendCommLog = {
   timestamp: string;
@@ -12,8 +15,8 @@ type BackendCommLog = {
   statusCode?: number;
 };
 
-type DevTrayProps = {
-  appPhase: string;
+export type DevTrayProps = { // Export DevTrayProps
+  appPhase: UIState; // Use UIState type
   sessionStatus: string;
   sessionId: string | null;
   isSessionActive: boolean;
@@ -29,7 +32,7 @@ type DevTrayProps = {
   clientEventsLog: string[];
 };
 
-export default function DevTray({
+const DevTray: React.FC<DevTrayProps> = ({ // Use React.FC<DevTrayProps>
   appPhase,
   sessionStatus,
   sessionId,
@@ -44,7 +47,7 @@ export default function DevTray({
   outputSet2Received,
   outputSet2ApproxLength,
   clientEventsLog,
-}: DevTrayProps) {
+}) => { // Removed : DevTrayProps as it's in React.FC
   // State for expanded/collapsed tray
   const [isTrayOpen, setIsTrayOpen] = useState(false);
   
@@ -71,8 +74,8 @@ export default function DevTray({
   };
   
   // Format nullable values for display
-  const formatNullable = <T,>(value: T | null, formatter?: (val: T) => string) => {
-    if (value === null) return "N/A";
+  const formatNullable = <T extends {}>(value: T | null, formatter?: (val: T) => string) => { // Constrained T to {}
+    if (value === null || value === undefined) return "N/A"; // Added undefined check
     return formatter ? formatter(value) : String(value);
   };
   
@@ -95,12 +98,13 @@ export default function DevTray({
               <Settings size={14} className="mr-2 text-teal-400" />
               Dev Tray
             </h3>
-            <button 
+            {/* Toggle button inside the tray header to close it */}
+            <button
               onClick={() => setIsTrayOpen(false)}
               className="text-gray-400 hover:text-white"
               aria-label="Close developer tray"
             >
-              {isTrayOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+              <X size={16} /> 
             </button>
           </div>
           
@@ -169,10 +173,11 @@ export default function DevTray({
                 <span className="text-gray-400 block mb-1">Backend Comm Log:</span>
                 {backendCommsLog.length > 0 ? (
                   <div className="space-y-1 max-h-32 overflow-y-auto pr-1 bg-black/20 p-2 rounded">
-                    {backendCommsLog.slice(-5).map((log, index) => (
+                    {/* Ensure backendCommsLog is an array before slicing */}
+                    {(backendCommsLog || []).slice(-5).map((log, index) => (
                       <div key={index} className="text-[10px] leading-tight">
                         <span className="text-gray-500">{log.timestamp}</span>
-                        <span className="text-blue-400"> {log.serviceTarget === 'Backend' ? 'Cloud Application Back-End' : log.serviceTarget}</span>
+                        <span className="text-blue-400"> {log.serviceTarget === 'Backend' ? 'Cloud App BE' : log.serviceTarget}</span>
                         <span className="text-teal-300"> {log.method}</span>
                         <span className={`${log.outcome === 'success' ? 'text-green-400' : 'text-red-400'}`}> {log.outcome}</span>
                         {log.statusCode && <span className="text-yellow-400"> ({log.statusCode})</span>}
@@ -213,7 +218,8 @@ export default function DevTray({
                 <span className="text-gray-400 block mb-1">Client Event Log:</span>
                 {clientEventsLog.length > 0 ? (
                   <div className="space-y-1 max-h-32 overflow-y-auto pr-1 bg-black/20 p-2 rounded">
-                    {clientEventsLog.slice(-5).map((log, index) => (
+                    {/* Ensure clientEventsLog is an array before slicing */}
+                    {(clientEventsLog || []).slice(-5).map((log, index) => (
                       <div key={index} className="text-[10px] leading-tight text-gray-300">
                         {log}
                       </div>
@@ -227,10 +233,11 @@ export default function DevTray({
           </div>
           
           <div className="bg-gray-900/70 px-3 py-2 text-[10px] text-gray-500 border-t border-gray-800">
-            Build info: Development | {new Date().toLocaleDateString()}
+            Build info: Dev | {new Date().toLocaleDateString()}
           </div>
         </div>
       )}
     </div>
   );
-}
+};
+export default DevTray; // Ensure default export

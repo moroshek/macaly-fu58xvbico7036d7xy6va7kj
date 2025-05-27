@@ -11,18 +11,20 @@ import useEmergencyDetection from '@/hooks/useEmergencyDetection';
 import useAccessibilityFeatures from '@/hooks/useAccessibilityFeatures';
 import { SessionContext } from './MedicalIntakeSession';
 import DebugButton from './DebugButton';
-import { Utterance } from '@/app/page'; // Import Utterance type from your page
+import { Utterance } from '@/lib/types'; // Updated import path for Utterance
+import { SCREEN_READER_ANNOUNCEMENT_MAX_LENGTH, UIState } from '@/lib/config'; // Imported UIState
+import { UltravoxStatusType } from '../VoiceActivityIndicator'; // Imported UltravoxStatusType
 
 interface EnhancedMedicalIntakeUIProps {
   children?: React.ReactNode;
   onStartInterview?: () => void;
   onEndInterview?: () => void;
   currentTranscript: Utterance[];
-  uvStatus: string;
-  uiState: string;
+  uvStatus: UltravoxStatusType; // Used UltravoxStatusType
+  uiState: UIState; // Used UIState
 }
 
-const EnhancedMedicalIntakeUI: React.FC<EnhancedMedicalIntakeUIProps> = ({ 
+const EnhancedMedicalIntakeUI: React.FC<EnhancedMedicalIntakeUIProps> = ({
   children, 
   onStartInterview,
   onEndInterview,
@@ -51,9 +53,9 @@ const EnhancedMedicalIntakeUI: React.FC<EnhancedMedicalIntakeUIProps> = ({
       }
 
       // Announce to screen readers
-      announceToScreenReader(
-        `${lastUtterance.speaker === 'user' ? 'You said' : 'AI said'}: ${lastUtterance.text.substring(0, 50)}${lastUtterance.text.length > 50 ? '...' : ''}`
-      );
+      const announcementText = lastUtterance.text.substring(0, SCREEN_READER_ANNOUNCEMENT_MAX_LENGTH);
+      const fullAnnouncement = `${lastUtterance.speaker === 'user' ? 'You said' : 'AI said'}: ${announcementText}${lastUtterance.text.length > SCREEN_READER_ANNOUNCEMENT_MAX_LENGTH ? '...' : ''}`;
+      announceToScreenReader(fullAnnouncement);
     }
   }, [currentTranscript, detectEmergency, announceToScreenReader]);
 

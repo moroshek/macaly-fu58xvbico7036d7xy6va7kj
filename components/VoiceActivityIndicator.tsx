@@ -3,15 +3,39 @@
 import React from 'react';
 import { Mic, Volume2, Brain, Wifi } from 'lucide-react';
 
-interface VoiceActivityIndicatorProps {
-  uvStatus: string;
+// Define the possible statuses for Ultravox
+export type UltravoxStatusType = 
+  | 'listening' 
+  | 'speaking' 
+  | 'thinking' 
+  | 'connected' 
+  | 'idle' 
+  | 'disconnected' 
+  | 'error' 
+  | 'connecting' // Explicitly add based on default text
+  | 'unknown'    // From useUltravoxSession
+  | string; // Allow other string values for flexibility
+
+export interface VoiceActivityIndicatorProps {
+  uvStatus: UltravoxStatusType;
   isInterviewActive: boolean;
 }
 
-export default function VoiceActivityIndicator({ uvStatus, isInterviewActive }: VoiceActivityIndicatorProps) {
+const VoiceActivityIndicator: React.FC<VoiceActivityIndicatorProps> = ({ uvStatus, isInterviewActive }) => {
   if (!isInterviewActive) return null;
 
-  const getStatusConfig = () => {
+  // Define a type for the status configuration object
+  type StatusConfig = {
+    icon: JSX.Element;
+    text: string;
+    bgColor: string;
+    pulseColor: string;
+    textColor: string;
+    bgOpacity: string;
+    isActive: boolean;
+  };
+
+  const getStatusConfig = (): StatusConfig => {
     switch (uvStatus) {
       case 'listening':
         return {
@@ -33,7 +57,7 @@ export default function VoiceActivityIndicator({ uvStatus, isInterviewActive }: 
           bgOpacity: 'bg-blue-50',
           isActive: true,
         };
-      case 'thinking':
+      case 'thinking': // Also known as 'processing' in some contexts
         return {
           icon: <Brain className="w-5 h-5" />,
           text: 'AI is thinking...',
@@ -54,10 +78,21 @@ export default function VoiceActivityIndicator({ uvStatus, isInterviewActive }: 
           bgOpacity: 'bg-green-50',
           isActive: false,
         };
-      default:
+      case 'disconnected':
+      case 'error':
+        return {
+          icon: <Wifi className="w-5 h-5 text-red-500" />, // Indicate error state
+          text: uvStatus === 'error' ? 'Error occurred' : 'Disconnected',
+          bgColor: 'bg-red-500',
+          pulseColor: 'bg-red-400',
+          textColor: 'text-red-700',
+          bgOpacity: 'bg-red-50',
+          isActive: false,
+        };
+      default: // Covers 'connecting', 'unknown', and any other string
         return {
           icon: <Wifi className="w-5 h-5" />,
-          text: 'Connecting...',
+          text: 'Connecting...', // Default or specific like uvStatus
           bgColor: 'bg-gray-500',
           pulseColor: 'bg-gray-400',
           textColor: 'text-gray-700',
@@ -67,7 +102,7 @@ export default function VoiceActivityIndicator({ uvStatus, isInterviewActive }: 
     }
   };
 
-  const config = getStatusConfig();
+  const config: StatusConfig = getStatusConfig();
 
   return (
     <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
@@ -113,4 +148,6 @@ export default function VoiceActivityIndicator({ uvStatus, isInterviewActive }: 
       </div>
     </div>
   );
-}
+};
+
+export default VoiceActivityIndicator;
