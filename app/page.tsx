@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useCallback, useState, useRef } from "react"; // Added useRef
+import React, { useEffect, useCallback, useState, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Shield, Lock, Mic, X, Loader2, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import {
   PULSING_ANIMATION_CONFIG
 } from "@/lib/config";
 import { useToast } from "@/hooks/use-toast";
-import { useAppState } from "@/hooks/useAppState"; // Assuming this is the correct path
+import { useAppState } from "@/hooks/useAppState";
 import { useAppLogger } from "@/hooks/useAppLogger";
 import { useUltravoxSession } from "@/hooks/useUltravoxSession";
 import { useInterviewManager } from "@/hooks/useInterviewManager";
@@ -29,13 +29,122 @@ import VoiceActivityIndicator from "@/components/VoiceActivityIndicator";
 import IntakeControlUI from "@/components/page/medical-intake/IntakeControlUI";
 import ResultsDisplay from "@/components/page/medical-intake/ResultsDisplay";
 
-export default function Page() { // Renamed to Page as per your correction
-  const isMountedRef = useRef(false); // To track initial mount for some effects
+// Error Overlay Component
+const ErrorOverlay: React.FC<{
+  errorMessage: string;
+  onRetry: () => void;
+  onReset: () => void;
+}> = ({ errorMessage, onRetry, onReset }) => {
+  return (
+    <div 
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.85)',
+        color: 'white',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999,
+        padding: '20px'
+      }}
+    >
+      <div 
+        style={{
+          background: '#1f2937',
+          padding: '40px',
+          borderRadius: '12px',
+          textAlign: 'center',
+          maxWidth: '500px',
+          width: '100%',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+        }}
+      >
+        <div style={{ marginBottom: '20px' }}>
+          <X size={48} style={{ color: '#ef4444', margin: '0 auto 16px' }} />
+        </div>
+        
+        <h2 style={{ 
+          fontSize: '1.5rem', 
+          fontWeight: 'bold', 
+          marginBottom: '16px',
+          color: '#f9fafb'
+        }}>
+          An Error Occurred
+        </h2>
+        
+        <p style={{ 
+          marginBottom: '24px', 
+          color: '#d1d5db',
+          lineHeight: '1.5'
+        }}>
+          {errorMessage || 'Failed to connect or process the interview.'}
+        </p>
+        
+        <div style={{ 
+          display: 'flex', 
+          gap: '12px', 
+          justifyContent: 'center',
+          flexWrap: 'wrap'
+        }}>
+          <button
+            onClick={onRetry}
+            style={{
+              padding: '12px 24px',
+              background: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: '500',
+              fontSize: '14px'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.background = '#2563eb'}
+            onMouseOut={(e) => e.currentTarget.style.background = '#3b82f6'}
+          >
+            Try Again
+          </button>
+          
+          <button
+            onClick={onReset}
+            style={{
+              padding: '12px 24px',
+              background: '#6b7280',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: '500',
+              fontSize: '14px'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.background = '#4b5563'}
+            onMouseOut={(e) => e.currentTarget.style.background = '#6b7280'}
+          >
+            Start Over
+          </button>
+        </div>
+        
+        <p style={{ 
+          marginTop: '20px', 
+          fontSize: '12px', 
+          color: '#9ca3af' 
+        }}>
+          If this problem persists, please refresh the page or try a different browser.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default function Page() {
+  const isMountedRef = useRef(false);
 
   // --- START: RENDER LOG ---
-  // Log current state from useAppState directly if possible, or parts of it.
-  // This log will show values *before* this render's effects might change them.
-  const currentAppStateForRenderLog = useAppState.getState ? useAppState.getState() : null; // Example for Zustand
+  const currentAppStateForRenderLog = useAppState.getState ? useAppState.getState() : null;
   console.log(
     '[Page RENDER] Component rendering. App State (at start of render):', 
     currentAppStateForRenderLog ? { 
@@ -64,16 +173,14 @@ export default function Page() { // Renamed to Page as per your correction
 
   const ultravoxSessionHook = useUltravoxSession({
     onTranscriptUpdate: appStateSetters.setTranscript,
-    onStatusChange: (status) => { // Wrapped to log
+    onStatusChange: (status) => {
       console.log('[Page onStatusChange prop] CALLED by useUltravoxSession. New status:', status);
       appStateSetters.setUvStatus(status);
     },
     onSessionEnd: useCallback(() => {
       console.log('[Page onSessionEnd prop] CALLED by useUltravoxSession.');
       logger.logClientEvent("Session ended via onSessionEnd callback (e.g. external disconnect)");
-      // Accessing state.currentTranscript here might be stale if onSessionEnd is memoized with old state
-      // It's often better to get fresh state if needed, or ensure useAppState provides stable selectors
-      const currentTranscriptSnapshot = useAppState.getState ? useAppState.getState().currentTranscript : state.currentTranscript; // Get fresh state
+      const currentTranscriptSnapshot = useAppState.getState ? useAppState.getState().currentTranscript : state.currentTranscript;
       if (currentTranscriptSnapshot.length > 0) {
         console.log('[Page onSessionEnd prop] Transcript found, setting processTranscriptAfterSession to true.');
         setProcessTranscriptAfterSession(true);
@@ -84,14 +191,12 @@ export default function Page() { // Renamed to Page as per your correction
         toast({ title: "Session Ended", description: "No conversation data." });
         appStateSetters.setUiState('idle');
       }
-    }, [logger, appStateSetters, toast]), // Removed state.currentTranscript from here, get fresh inside
-    onError: useCallback((error: Error) => { // Ensure onError is stable if passed to ultravoxSessionHook
+    }, [logger, appStateSetters, toast]),
+    onError: useCallback((error: Error) => {
       console.error('[Page onError prop] CALLED by useUltravoxSession:', error);
       logger.logError('UltravoxSession', error.message, error);
       appStateSetters.setError(error.message);
-      // Potentially set UI state to error here too
-      // appStateSetters.setUiState('error');
-    }, [logger, appStateSetters]), // Added appStateSetters for stability
+    }, [logger, appStateSetters]),
   });
 
   const {
@@ -131,7 +236,7 @@ export default function Page() { // Renamed to Page as per your correction
     return () => {
       const cleanupState = useAppState.getState ? useAppState.getState() : null;
       console.log('[Page useEffect - ProcessTranscript] CLEANUP. Current App State (approx):', cleanupState ? { uiState: cleanupState.uiState, processTranscriptAfterSession } : "N/A");
-      console.trace(); // CRITICAL TRACE
+      console.trace();
     };
   }, [processTranscriptAfterSession, handleSubmitTranscript, logger]);
   // --- END: LOGGING FOR useEffect - ProcessTranscript ---
@@ -141,11 +246,9 @@ export default function Page() { // Renamed to Page as per your correction
     const depsValues = { setOnline_exists: !!appStateSetters.setOnline, logger_exists: !!logger };
     console.log('[Page useEffect - NetworkSetup] FIRED/DEPS CHANGED. Dependencies (values/existence):', depsValues);
     
-    // Initial check
     if (typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean') {
         appStateSetters.setOnline(navigator.onLine);
     } else {
-        // Default to true or handle server-side rendering case if applicable
         appStateSetters.setOnline(true); 
     }
 
@@ -157,7 +260,7 @@ export default function Page() { // Renamed to Page as per your correction
     return () => {
       const cleanupState = useAppState.getState ? useAppState.getState() : null;
       console.log('[Page useEffect - NetworkSetup] CLEANUP. Current App State (approx):', cleanupState ? { isOnline: cleanupState.isOnline } : "N/A");
-      console.trace(); // CRITICAL TRACE
+      console.trace();
       if (typeof cleanupListeners === 'function') {
         cleanupListeners();
       }
@@ -166,7 +269,7 @@ export default function Page() { // Renamed to Page as per your correction
   // --- END: LOGGING FOR useEffect - NetworkSetup ---
 
   const handleDebugClick = useCallback(() => {
-    const currentState = useAppState.getState ? useAppState.getState() : state; // Get fresh or current state
+    const currentState = useAppState.getState ? useAppState.getState() : state;
     console.log("=== DEBUG STATE ===", {
       uiState: currentState.uiState,
       uvStatus: currentState.uvStatus,
@@ -176,17 +279,17 @@ export default function Page() { // Renamed to Page as per your correction
       callId: currentState.callId,
       isOnline: currentState.isOnline,
       errorMessage: currentState.errorMessage,
-      ultravoxSessionObject: ultravoxSessionHook.session // Log the session object from the hook
+      ultravoxSessionObject: ultravoxSessionHook.session
     });
     logger.logClientEvent("Manual debug triggered");
-  }, [logger, ultravoxSessionHook.session, state]); // Added state as ultravoxSessionHook.session might not cover all state parts if not using zustand getState
+  }, [logger, ultravoxSessionHook.session, state]);
 
   const formatSummaryField = (value: string | null | undefined) => {
     return value?.trim() || "Not reported";
   };
 
   const getStatusText = () => {
-    const currentState = useAppState.getState ? useAppState.getState() : state; // Get fresh or current state
+    const currentState = useAppState.getState ? useAppState.getState() : state;
     const statusMap = {
       'idle': "Ready to start your medical intake interview",
       'requesting_permissions': "Requesting microphone permissions...",
@@ -204,46 +307,48 @@ export default function Page() { // Renamed to Page as per your correction
     isMountedRef.current = true;
     console.log(`[Page LIFECYCLE] Component Did MOUNT. Initial App State uiState: ${useAppState.getState ? useAppState.getState().uiState : state.uiState}`);
     
-    // Example: Log browser compatibility and initial mic permission check
     const browserCheck = checkBrowserCompatibility();
     if (!browserCheck.compatible) {
         logger.logClientEvent(`Browser compatibility issues on mount: ${browserCheck.issues.join(', ')}`);
     }
-    checkMicrophonePermissions().then(micResult => { // Assuming this returns a promise
+    checkMicrophonePermissions().then(micResult => {
         logger.logClientEvent(`Initial mic permission on mount: ${micResult.granted ? 'granted' : 'not granted/denied/prompt'}`);
         appStateSetters.setAudioPermission(micResult.granted);
     });
 
-
     return () => {
       isMountedRef.current = false;
       console.log(`[Page LIFECYCLE] Component Will UNMOUNT. Final App State uiState: ${useAppState.getState ? useAppState.getState().uiState : state.uiState}`);
-      console.trace(); // CRITICAL TRACE FOR PAGE UNMOUNT
+      console.trace();
     };
-  }, [appStateSetters, logger]); // Added appStateSetters and logger; if these are stable, effect runs once.
-                                // If appStateSetters is an object that changes, this will re-run.
-                                // Consider if checkMicrophonePermissions should be here or triggered by user action.
+  }, [appStateSetters, logger]);
   // --- END: LOGGING FOR PAGE LIFECYCLE (MOUNT/UNMOUNT) ---
 
-
-  // --- START: LOGGING FOR UI STATE CHANGES (Example) ---
-  // This specific effect watches for uiState changes to demonstrate logging.
-  // Adapt or remove if you have more specific effects reacting to uiState.
+  // --- START: LOGGING FOR UI STATE CHANGES ---
   useEffect(() => {
-    if (isMountedRef.current) { // Don't log for initial mount if already handled by mount effect
+    if (isMountedRef.current) {
         console.log(`[Page useEffect - UIStateChange] FIRED/DEPS CHANGED. New uiState: ${state.uiState}. Previous might be different.`);
     }
     return () => {
-      // No complex cleanup needed here usually, but good for tracing if this effect causes issues.
-      // Only add trace if you suspect this effect's re-run/cleanup is problematic.
-      // console.log(`[Page useEffect - UIStateChange] CLEANUP. Current uiState: ${state.uiState}`);
-      // console.trace(); 
+      // No cleanup needed for simple logging
     };
   }, [state.uiState]);
   // --- END: LOGGING FOR UI STATE CHANGES ---
 
+  // Error overlay handlers
+  const handleErrorRetry = useCallback(() => {
+    console.log('[Page Error Overlay] Retry clicked.');
+    appStateSetters.clearError();
+    appStateSetters.setUiState('idle');
+  }, [appStateSetters]);
+
+  const handleErrorReset = useCallback(() => {
+    console.log('[Page Error Overlay] Start Over clicked.');
+    resetAllAndStartNew();
+  }, [resetAllAndStartNew]);
+
   return (
-    <div className="flex flex-col min-h-screen">
+    <div className="relative flex flex-col min-h-screen">
       {process.env.NODE_ENV === 'development' && (
         <button
           onClick={handleDebugClick}
@@ -295,10 +400,10 @@ export default function Page() { // Renamed to Page as per your correction
         submittedDataLength={state.currentTranscript.length > 0 ? state.currentTranscript.map(u => u.text).join('').length : null}
         backendCommsLog={logger.getBackendComms()}
         outputSet1Received={!!state.summaryData}
-        outputSet1FieldCount={state.summaryData ? Object.keys(state.summaryData).filter(k => state.summaryData && state.summaryData[k as keyof SummaryData] !== null).length : null} // Added type assertion
+        outputSet1FieldCount={state.summaryData ? Object.keys(state.summaryData).filter(k => state.summaryData && state.summaryData[k as keyof SummaryData] !== null).length : null}
         outputSet2Received={!!state.analysisData}
         outputSet2ApproxLength={state.analysisData ? state.analysisData.length : null}
-        clientEventsLog={logger.getClientEvents().map(e => `${new Date(e.timestamp).toLocaleTimeString()}: ${e.message}`)} // Using toLocaleTimeString for readability
+        clientEventsLog={logger.getClientEvents().map(e => `${new Date(e.timestamp).toLocaleTimeString()}: ${e.message}`)}
       />
 
       <main className="flex-1">
@@ -396,6 +501,15 @@ export default function Page() { // Renamed to Page as per your correction
           {/* ... footer section ... */}
         </div>
       </footer>
+
+      {/* ERROR OVERLAY - This prevents the Page component from unmounting */}
+      {state.uiState === 'error' && (
+        <ErrorOverlay
+          errorMessage={state.errorMessage}
+          onRetry={handleErrorRetry}
+          onReset={handleErrorReset}
+        />
+      )}
     </div>
   );
 }
