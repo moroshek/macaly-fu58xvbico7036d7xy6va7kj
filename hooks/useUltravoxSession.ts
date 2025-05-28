@@ -248,8 +248,31 @@ export function useUltravoxSession({
             const ws = newSession.socket;
             ws.onopen = (event) => console.log('[WebSocket RAW] Open:', event);
             ws.onmessage = (event) => console.log('[WebSocket RAW] Message:', event.data);
-            ws.onerror = (event) => console.error('[WebSocket RAW] Error:', event);
-            ws.onclose = (event) => console.log('[WebSocket RAW] Close - Code:', event.code, 'Reason:', event.reason, 'WasClean:', event.wasClean);
+            ws.onerror = (event) => {
+              console.error('[WebSocket RAW] Error Details:', {
+                type: event.type,
+                // target: event.target, // Comment out or remove if target causes circular JSON issues or is too verbose
+                readyState: ws.readyState,
+                url: ws.url,
+                // protocol: ws.protocol, // Usually empty for 'error'
+                // extensions: ws.extensions, // Usually empty for 'error'
+              });
+            };
+            ws.onclose = (event) => {
+              console.error('[WebSocket RAW] Close Details:', { // Changed to console.error for consistency with error conditions
+                code: event.code,
+                reason: event.reason,
+                wasClean: event.wasClean,
+                readyState: ws.readyState, // Added readyState
+                url: ws.url, // Added URL
+                // Common close codes:
+                // 1006: Abnormal Closure (no close frame received) - This is the key one we're seeing
+                // 1000: Normal closure
+                // 1001: Going away
+                // 1002: Protocol error
+                // 1003: Unsupported data
+              });
+            };
             // No need for a separate "Raw event listeners attached." log, the onopen/onclose will show activity.
         } else {
             console.warn('[WebSocket RAW] newSession.socket is not available immediately after joinCall resolved. Cannot attach raw listeners.');
@@ -326,8 +349,7 @@ export function useUltravoxSession({
     onSessionEnd,
     onError,
     toast,
-    errorHandler,
-    session
+    errorHandler
   ]);
 
   /**
