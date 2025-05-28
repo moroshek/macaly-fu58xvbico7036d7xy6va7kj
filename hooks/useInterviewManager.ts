@@ -123,8 +123,9 @@ export const useInterviewManager = (deps: UseInterviewManagerProps): InterviewMa
 
       setInterviewActive(true);
       logger.logClientEvent("Interview started successfully");
-      // UI_STATES.INTERVIEWING is typically set by Ultravox status events via useUltravoxSession's onStatusChange
-      // but if not, we might need to set it here or ensure onStatusChange handles 'connected' or similar.
+      // UI_STATES.INTERVIEWING is typically set by Ultravox status events.
+      // setInterviewActive(true) and related logging are now handled by a useEffect hook
+      // monitoring appState.uvStatus (which reflects callStatus).
 
     } catch (error) {
       const appError = errorHandler.handle(error, { source: 'startInterview' });
@@ -146,6 +147,7 @@ export const useInterviewManager = (deps: UseInterviewManagerProps): InterviewMa
     // The appState object itself is a dependency if any of its properties are used.
     // For more granular control, list specific appState properties: appState.isOnline, etc.
     // However, if many are used, appState as a whole is fine.
+    // appState.uvStatus is intentionally not listed here as it's handled in a separate useEffect.
   ]);
 
   const handleSubmitTranscript = useCallback(async () => {
@@ -282,6 +284,24 @@ export const useInterviewManager = (deps: UseInterviewManagerProps): InterviewMa
     setTimeout(() => handleStartInterview(), START_INTERVIEW_DELAY_MS);
   }, [appStateResetAll, logger.clearLogs, handleStartInterview, START_INTERVIEW_DELAY_MS]);
 
+  // useEffect to react to Ultravox callStatus changes (via appState.uvStatus)
+  useEffect(() => {
+    if (appState.uvStatus === 'idle') {
+      // This indicates the session is established and ready, but not yet actively listening.
+      // We might not setInterviewActive(true) here yet, depending on desired UX.
+      // For now, just logging. The 'listening' state will confirm active interview.
+      logger.logClientEvent(`[InterviewManager] Ultravox session is ready (status: ${appState.uvStatus}). Waiting for 'listening'.`);
+    } else if (appState.uvStatus === 'listening') {
+      logger.logClientEvent(`[InterviewManager] Ultravox session is active (status: ${appState.uvStatus}). Interview started.`);
+      setInterviewActive(true);
+      // Potentially set UI_STATE to INTERVIEWING here if not already handled by onStatusChange in page.tsx
+      // setUiState(UI_STATES.INTERVIEWING); // Consider if this is the right place
+    } else if (appState.uvStatus === 'disconnected' || appState.uvStatus === 'error' || appState.uvStatus === 'failed') {
+      // Ensure interview is marked as inactive if UV session disconnects or errors out
+      logger.logClientEvent(`[InterviewManager] Ultravox session ended or failed (status: ${appState.uvStatus}). Marking interview inactive.`);
+      setInterviewActive(false);
+    }
+  }, [appState.uvStatus, setInterviewActive, logger, setUiState]); // Added setUiState to deps if used
 
   return {
     handleStartInterview,
