@@ -8,8 +8,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "node --expose-gc --no-compilation-cache --max-old-space-size=4096 node_modules/.bin/jest",
+    "test:watch": "node --expose-gc --no-compilation-cache --max-old-space-size=4096 node_modules/.bin/jest --watch",
+    "test:coverage": "node --expose-gc --no-compilation-cache --max-old-space-size=4096 node_modules/.bin/jest --coverage",
+    "test:debug": "node --inspect-brk --expose-gc --no-compilation-cache --max-old-space-size=4096 node_modules/.bin/jest --runInBand --no-cache",
+    "test:single": "node --expose-gc --no-compilation-cache --max-old-space-size=4096 node_modules/.bin/jest --runInBand --no-cache --bail"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.1",
