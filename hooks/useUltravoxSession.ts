@@ -86,77 +86,56 @@ export function useUltravoxSession({
       };
 
       // Status change handler
-      const handleStatusChange = (event: any) => {
-        const status =
-          typeof event === 'string'
-            ? event
-            : event?.data || event?.status || newSession.status || 'unknown';
+      const handleStatusChange = (eventOrStatus: any) => {
+        console.log('[Ultravox] Raw status update event:', eventOrStatus); // Log raw event as requested
 
-        console.log('[Ultravox] Status changed to:', status);
-        onStatusChange(status);
+        let currentStatus: string | undefined;
+        let reason: string | undefined;
 
-        if (status === 'disconnected') {
-          console.log('[Ultravox] Session disconnected');
-          onSessionEnd();
-        }
-      };
-
-      // Experimental message handler for detecting end signals
-      const handleExperimentalMessage = (event: any) => {
-        try {
-          const message = event?.data || event;
-          console.log('[Ultravox] Experimental message received:', message);
-
-          if (message && typeof message === 'object') {
-            const messageStr = JSON.stringify(message).toLowerCase();
-
-            // Check for hangup indicators
-            const hangupIndicators = [
-              'hangup',
-              'hang_up',
-              'hang-up',
-              '"toolname":"hangup"',
-              '"name":"hangup"',
-              '"tool_name":"hangup"',
-              '"function":"hangup"',
-            ];
-
-            const foundHangup = hangupIndicators.some((indicator) =>
-              messageStr.includes(indicator)
-            );
-
-            if (foundHangup) {
-              console.log('[Ultravox] DETECTED HANGUP TOOL CALL');
-              setTimeout(() => {
-                onSessionEnd();
-              }, 2000);
-              return;
-            }
-
-            // Check for completion phrases
-            const completionIndicators = [
-              'interview complete',
-              'interview is complete',
-              'thank you for completing',
-              'that concludes',
-              'all done',
-              'finished with questions',
-            ];
-
-            const foundCompletion = completionIndicators.some((indicator) =>
-              messageStr.includes(indicator)
-            );
-
-            if (foundCompletion) {
-              console.log('[Ultravox] DETECTED COMPLETION PHRASE');
-              setTimeout(() => {
-                onSessionEnd();
-              }, 3000);
-            }
+        // Attempt to parse status and reason from the event structure
+        if (typeof eventOrStatus === 'string') {
+          currentStatus = eventOrStatus;
+        } else if (eventOrStatus && typeof eventOrStatus.detail !== 'undefined') { // Check eventOrStatus.detail presence
+          if (typeof eventOrStatus.detail === 'string') {
+            currentStatus = eventOrStatus.detail;
+          } else if (eventOrStatus.detail && typeof eventOrStatus.detail.status === 'string') { // Check eventOrStatus.detail.status
+            currentStatus = eventOrStatus.detail.status;
+            reason = eventOrStatus.detail.reason;
           }
-        } catch (err) {
-          console.error('[Ultravox] Error processing experimental message:', err);
         }
+       
+        // Fallback to session properties if not found in event, or if event is just a simple string
+        // Ensure newSession is the session instance that these listeners are attached to.
+        if (!currentStatus && newSession && typeof newSession.status === 'string') {
+          currentStatus = newSession.status;
+        }
+        if (!reason && newSession && typeof newSession.endReason === 'string') { // Assuming endReason exists
+          reason = newSession.endReason;
+        }
+
+        // Default to 'unknown' if status could not be determined
+        currentStatus = currentStatus || 'unknown';
+
+        console.log(`[Ultravox] Processed status: ${currentStatus}, Reason: ${reason || 'not provided'}`);
+       
+        // Call the external onStatusChange callback
+        onStatusChange(currentStatus);
+
+        if (currentStatus === 'disconnected') {
+          console.log('[Ultravox] Session disconnected. Reason:', reason || 'unknown');
+          onSessionEnd(); // Call the external onSessionEnd callback
+
+          // Clean up listeners on this specific session instance
+          // Ensure newSession, handleTranscript, this handleStatusChange, and handleError are in scope
+          if (newSession) {
+            console.log('[Ultravox] Removing event listeners from disconnected session.');
+            newSession.removeEventListener('transcripts', handleTranscript);
+            newSession.removeEventListener('status', handleStatusChange); // Pass the function itself
+            newSession.removeEventListener('error', handleError);
+          }
+        }
+        // N.B. User example had 'connected' status handling, but current hook only calls onStatusChange.
+        // This is fine, as onStatusChange will receive 'connected'.
       };
 
       // Error handler
@@ -179,7 +158,6 @@ export function useUltravoxSession({
       // Add event listeners
       newSession.addEventListener('transcripts', handleTranscript);
       newSession.addEventListener('status', handleStatusChange);
-      newSession.addEventListener('experimental_message', handleExperimentalMessage);
       newSession.addEventListener('error', handleError);
 
       console.log('[Ultravox] Joining call...');
@@ -219,6 +197,12 @@ export function useUltravoxSession({
         variant: 'destructive',
       });
 
+      if (newSession && typeof newSession.removeEventListener === 'function') {
+        console.log('[Ultravox] Cleaning up listeners due to join call error.');
+        newSession.removeEventListener('transcripts', handleTranscript);
+        newSession.removeEventListener('status', handleStatusChange);
+        newSession.removeEventListener('error', handleError);
+      }
       return false;
     }
   }, [onTranscriptUpdate, onStatusChange, onSessionEnd, onError, toast, errorHandler]);
