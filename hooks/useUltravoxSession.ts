@@ -92,7 +92,7 @@ export function useUltravoxSession({
           console.error('[Ultravox] Error processing transcript:', err);
         }
       };
-      
+     
       const handleError = (event: any) => {
         const errorObj = event?.error || event;
         console.error('[Ultravox] Error:', errorObj);
@@ -117,14 +117,13 @@ export function useUltravoxSession({
             console.warn('[Ultravox] Status update but no current session in ref.');
             return;
         }
-        
+
         // Changed parsing from event.detail to event.target
         const currentStatus = event.target?.status;
         const previousStatus = event.target?.previousStatus; // Parsed, though not used in current logic flow
         const eventTargetEndReason = event.target?.endReason;
 
         console.log(`[Ultravox] Parsed Status from event.target: ${currentStatus}, Prev: ${previousStatus || 'N/A'}, Reason from event.target: ${eventTargetEndReason || 'N/A'}`);
-
         setCallStatus(currentStatus || null);
         onStatusChange(currentStatus || 'unknown'); // Call prop callback
 
@@ -240,7 +239,6 @@ export function useUltravoxSession({
   const endSession = useCallback(async () => {
     console.log('[Ultravox] endSession CALLED. Call stack:'); // Added
     console.trace(); // Added
-
     const currentSession = sessionRef.current; // Capture current session from ref
     if (currentSession && typeof currentSession.leaveCall === 'function') {
       try {
