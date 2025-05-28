@@ -296,12 +296,20 @@ export function useUltravoxSession({
 
   // Cleanup on unmount
   useEffect(() => {
+    // This effect runs once on mount to set up the cleanup
     return () => {
-      if (sessionRef.current) {
-        endSession();
+      // This cleanup runs ONLY on component unmount
+      const sessionToClean = sessionRef.current;
+      if (sessionToClean && typeof sessionToClean.leaveCall === 'function') {
+        console.log('[Ultravox] useEffect unmount cleanup: Component is unmounting. Leaving call if session exists.');
+        sessionToClean.leaveCall().catch((err: any) => { // Call leaveCall directly on the ref's value
+          console.error('[Ultravox] Error in unmount cleanup (leaveCall):', err);
+          // Potentially call onErrorCallback here if appropriate for unmount errors
+          onError(err instanceof Error ? err : new Error(String(err))); // Pass the onError prop to the hook.
+        });
       }
     };
-  }, [endSession]);
+  }, []); // EMPTY DEPENDENCY ARRAY ensures this cleanup only runs on unmount
 
   return {
     session,
