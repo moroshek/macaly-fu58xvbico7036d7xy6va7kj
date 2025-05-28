@@ -189,6 +189,7 @@ export function useUltravoxSession({
       // Unmute microphone
       try {
         if (typeof newSession.unmuteMic === 'function') {
+          console.log('[Ultravox] Attempting to unmute microphone (SDK call)...'); // Added
           newSession.unmuteMic();
           console.log('[Ultravox] Microphone unmuted');
         }
