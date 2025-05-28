@@ -1,4 +1,6 @@
-// All imports related to CSS, fonts, Metadata, StableClientWrapper are temporarily removed.
+"use client"; // Added this line
+
+// All other original imports related to CSS, fonts, Metadata, StableClientWrapper remain removed for this test.
 
 export default function RootLayout({
   children,
