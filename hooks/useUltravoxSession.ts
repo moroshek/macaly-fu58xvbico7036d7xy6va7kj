@@ -29,6 +29,7 @@ export function useUltravoxSession({
   const [callEndReason, setCallEndReason] = useState<string | null>(null);
   const sessionRef = useRef<any>(null);
   const prevStatusRef = useRef<string | null>(null); // Added prevStatusRef
+  const hasReachedIdleStateRef = useRef<boolean>(false);
   const { toast } = useToast();
   const errorHandler = ErrorHandler.getInstance();
   const config = getConfig();
@@ -135,6 +136,7 @@ export function useUltravoxSession({
             console.log('[Client] Ultravox session is now idle. Session instance:', currentSessionInstance);
             setSession(currentSessionInstance); // Provide session object to parent component
             setCallStatus('idle');
+            hasReachedIdleStateRef.current = true; // Set the ref here
             
             console.log('[Client] Attempting to unmute microphone as session is idle.');
             if (currentSessionInstance && typeof currentSessionInstance.unmuteMic === 'function') {
@@ -158,14 +160,33 @@ export function useUltravoxSession({
                 console.warn("[Client] Session was not set by 'idle' status, setting it now due to 'listening' status.");
                 setSession(currentSessionInstance);
             }
+            if (!hasReachedIdleStateRef.current && currentSessionInstance) { // Also check here
+                console.warn("[Client] Session was not set by 'idle' status but 'listening' was reached. Forcing idle reached true.");
+                hasReachedIdleStateRef.current = true; 
+            }
             break;
 
           case 'disconnected':
             const reason = currentSessionInstance?.endReason || eventTargetEndReason || 'unknown';
-            console.log('[Ultravox] Session disconnected. Reason:', reason, 'Previous status was:', prevStatusRef.current);
+            console.log(`[Ultravox] Session disconnected. Reason: ${reason}, Previous status was: ${prevStatusRef.current}`);
             setCallEndReason(reason);
             setCallStatus('disconnected');
 
+            // *** NEW LOGIC START ***
+            const previousStatus = prevStatusRef.current;
+            if (!hasReachedIdleStateRef.current || previousStatus === 'connecting') {
+              const errorMessage = `Ultravox connection failed: Disconnected from '${previousStatus || 'initial'}' state before reaching 'idle'. Reason: ${reason}`;
+              console.error(`[Ultravox] ${errorMessage}`);
+              // Ensure onError is called. It should be available in the scope of useUltravoxSession.
+              // onError is a prop passed to useUltravoxSession.
+              if (typeof onError === 'function') {
+                onError(new Error(errorMessage));
+              } else {
+                console.error('[Ultravox] onError callback is not available to report connection failure.');
+              }
+            }
+            // *** NEW LOGIC END ***
+            
             if (currentSessionInstance) {
               console.log('[Ultravox] Removing event listeners upon disconnect for session:', currentSessionInstance.id);
               // Ensure handlers are defined or passed in a way that they can be removed
@@ -180,18 +201,8 @@ export function useUltravoxSession({
                 console.warn('[Ultravox] No currentSessionInstance found in ref during disconnect to remove listeners from.');
             }
             
-            // Determine if the disconnect implies an error for onSessionEnd
-            // This is a placeholder for more sophisticated error checking if needed
-            const disconnectError = (reason !== 'normal' && reason !== 'call_ended_by_user') ? new Error(`Session disconnected with reason: ${reason}`) : null;
-            
             // Call onSessionEnd - ensure currentSessionInstance might be null if never established
             if (onSessionEnd) {
-                // The original subtask description for onSessionEnd was:
-                // onSessionEnd(currentSessionInstance, null)
-                // However, currentSessionInstance here refers to the one from sessionRef.current
-                // which might be null if the session never reached a state where it was set.
-                // Also, the second parameter is for an error.
-                // Passing sessionRef.current (which could be null) and disconnectError.
                 onSessionEnd(); // Simplified based on existing props, adjust if error needs to be passed
             }
             
@@ -199,6 +210,7 @@ export function useUltravoxSession({
             if (sessionRef.current) { // Clear the ref only if it was the one being disconnected
                 sessionRef.current = null;
             }
+            hasReachedIdleStateRef.current = false; // Reset for potential future sessions
             break;
             
           default:
@@ -248,8 +260,35 @@ export function useUltravoxSession({
             const ws = newSession.socket;
             ws.onopen = (event) => console.log('[WebSocket RAW] Open:', event);
             ws.onmessage = (event) => console.log('[WebSocket RAW] Message:', event.data);
-            ws.onerror = (event) => console.error('[WebSocket RAW] Error:', event);
-            ws.onclose = (event) => console.log('[WebSocket RAW] Close - Code:', event.code, 'Reason:', event.reason, 'WasClean:', event.wasClean);
+            ws.onerror = (event) => {
+              console.error('[WebSocket RAW] Error Details:', {
+                type: event.type,
+                // target: event.target, // Comment out or remove if target causes circular JSON issues or is too verbose
+                readyState: ws.readyState,
+                url: ws.url,
+                // protocol: ws.protocol, // Usually empty for 'error'
+                // extensions: ws.extensions, // Usually empty for 'error'
+              });
+              onError(new Error(`WebSocket error: type ${event.type}, readyState ${ws.readyState}, url ${ws.url}`));
+            };
+            ws.onclose = (event) => {
+              console.error('[WebSocket RAW] Close Details:', { // Changed to console.error for consistency with error conditions
+                code: event.code,
+                reason: event.reason,
+                wasClean: event.wasClean,
+                readyState: ws.readyState, // Added readyState
+                url: ws.url, // Added URL
+                // Common close codes:
+                // 1006: Abnormal Closure (no close frame received) - This is the key one we're seeing
+                // 1000: Normal closure
+                // 1001: Going away
+                // 1002: Protocol error
+                // 1003: Unsupported data
+              });
+              if (!event.wasClean || event.code === 1006) { // Only call onError for abnormal closures
+                onError(new Error(`WebSocket abnormal closure: Code ${event.code}, Reason: '${event.reason}', wasClean: ${event.wasClean}, url ${ws.url}`));
+              }
+            };
             // No need for a separate "Raw event listeners attached." log, the onopen/onclose will show activity.
         } else {
             console.warn('[WebSocket RAW] newSession.socket is not available immediately after joinCall resolved. Cannot attach raw listeners.');
@@ -326,8 +365,7 @@ export function useUltravoxSession({
     onSessionEnd,
     onError,
     toast,
-    errorHandler,
-    session
+    errorHandler
   ]);
 
   /**
