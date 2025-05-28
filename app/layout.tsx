@@ -1,26 +1,26 @@
-import "./globals.css";
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import StableClientWrapper from "./stable-client-wrapper";
+"use client"; // Keep this
 
-const inter = Inter({ subsets: ["latin"] });
+import { useEffect } from 'react'; // Import useEffect
 
-export const metadata: Metadata = {
-  title: "MedIntake - AI-Powered Medical Intake Assistant",
-  description: "Expedite your medical intake process with our secure, HIPAA-compliant AI assistant.",
-};
+// All other original imports related to CSS, fonts, Metadata, StableClientWrapper remain removed for this test.
 
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // Direct console.log removed from here
+
+  useEffect(() => {
+    console.log("--- app/layout.tsx RootLayout useEffect running on CLIENT ---"); // Test log inside useEffect
+  }, []); // Empty dependency array ensures it runs once on mount
+
   return (
     <html lang="en">
-      <body className={inter.className} suppressHydrationWarning={true}>
-        <StableClientWrapper>
-          {children}
-        </StableClientWrapper>
+      {/* className and suppressHydrationWarning are temporarily removed */}
+      <body>
+        {/* StableClientWrapper is temporarily removed */}
+        {children}
       </body>
     </html>
   );
