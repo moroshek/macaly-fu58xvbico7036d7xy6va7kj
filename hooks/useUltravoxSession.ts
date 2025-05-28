@@ -25,6 +25,8 @@ export function useUltravoxSession({
 }: UseUltravoxSessionProps) {
   const [session, setSession] = useState<any>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [callStatus, setCallStatus] = useState<string | null>(null);
+  const [callEndReason, setCallEndReason] = useState<string | null>(null);
   const sessionRef = useRef<any>(null);
   const { toast } = useToast();
   const errorHandler = ErrorHandler.getInstance();
@@ -54,30 +56,37 @@ export function useUltravoxSession({
       }
 
       console.log('[Ultravox] Creating new session');
-      const sessionOptions = {}; // Removed experimentalMessages
-      console.log('[Debug] Initializing UltravoxSession with options (experimentalMessages removed):', sessionOptions);
+
+      const sessionOptions = { experimentalMessages: new Set() };
+      console.log('[Debug] Initializing UltravoxSession with options (experimentalMessages set to new Set()):', { experimentalMessages: 'new Set()' });
       const newSession = new UltravoxSession(sessionOptions);
+      sessionRef.current = newSession; // Assign to sessionRef early
 
-      // Enhanced transcript handler
-      const handleTranscript = (event: any) => {
+      // Define ALL event handlers here, once, so they are in scope for add/remove.
+      const handleMicMuteChange = (muted: boolean) => {
+        console.log(`[Ultravox] micMutedNotifier event: Microphone is now ${muted ? 'MUTED' : 'UNMUTED'}`);
+      };
+      
+      const handleTranscript = () => {
+        const currentSession = sessionRef.current;
+        if (!currentSession) {
+            console.log('[Ultravox] Transcript update but no current session in ref.');
+            return;
+        }
         try {
-          console.log('[Ultravox] Transcript event received:', event);
-
-          if (newSession.transcripts && Array.isArray(newSession.transcripts)) {
-            const validTranscripts = newSession.transcripts
-              .filter((transcript: any) => {
-                return (
+          console.log('[Ultravox] Transcript event. Current transcript count:', currentSession.transcripts?.length);
+          if (currentSession.transcripts && Array.isArray(currentSession.transcripts)) {
+            const validTranscripts = currentSession.transcripts
+              .filter((transcript: any) => (
                   transcript &&
                   typeof transcript.text === 'string' &&
                   transcript.text.trim() !== '' &&
-                  transcript.isFinal !== false
-                );
-              })
-              .map((transcript: any) => ({
+                  transcript.isFinal !== false 
+              ))
+              .map((transcript: any) => ({ 
                 speaker: transcript.speaker === 'user' ? 'user' : 'agent',
                 text: transcript.text.trim(),
               }));
-
             onTranscriptUpdate(validTranscripts);
           }
         } catch (err) {
@@ -85,60 +94,6 @@ export function useUltravoxSession({
         }
       };
 
-      // Status change handler
-      const handleStatusChange = (eventOrStatus: any) => {
-        console.log('[Ultravox] Raw status update event:', eventOrStatus); // Log raw event as requested
-
-        let currentStatus: string | undefined;
-        let reason: string | undefined;
-
-        // Attempt to parse status and reason from the event structure
-        if (typeof eventOrStatus === 'string') {
-          currentStatus = eventOrStatus;
-        } else if (eventOrStatus && typeof eventOrStatus.detail !== 'undefined') { // Check eventOrStatus.detail presence
-          if (typeof eventOrStatus.detail === 'string') {
-            currentStatus = eventOrStatus.detail;
-          } else if (eventOrStatus.detail && typeof eventOrStatus.detail.status === 'string') { // Check eventOrStatus.detail.status
-            currentStatus = eventOrStatus.detail.status;
-            reason = eventOrStatus.detail.reason;
-          }
-        }
-       
-        // Fallback to session properties if not found in event, or if event is just a simple string
-        // Ensure newSession is the session instance that these listeners are attached to.
-        if (!currentStatus && newSession && typeof newSession.status === 'string') {
-          currentStatus = newSession.status;
-        }
-        if (!reason && newSession && typeof newSession.endReason === 'string') { // Assuming endReason exists
-          reason = newSession.endReason;
-        }
-
-        // Default to 'unknown' if status could not be determined
-        currentStatus = currentStatus || 'unknown';
-
-        console.log(`[Ultravox] Processed status: ${currentStatus}, Reason: ${reason || 'not provided'}`);
-       
-        // Call the external onStatusChange callback
-        onStatusChange(currentStatus);
-
-        if (currentStatus === 'disconnected') {
-          console.log('[Ultravox] Session disconnected. Reason:', reason || 'unknown');
-          onSessionEnd(); // Call the external onSessionEnd callback
-
-          // Clean up listeners on this specific session instance
-          // Ensure newSession, handleTranscript, this handleStatusChange, and handleError are in scope
-          if (newSession) {
-            console.log('[Ultravox] Removing event listeners from disconnected session.');
-            newSession.removeEventListener('transcripts', handleTranscript);
-            newSession.removeEventListener('status', handleStatusChange); // Pass the function itself
-            newSession.removeEventListener('error', handleError);
-          }
-        }
-        // N.B. User example had 'connected' status handling, but current hook only calls onStatusChange.
-        // This is fine, as onStatusChange will receive 'connected'.
-      };
-
-      // Error handler
       const handleError = (event: any) => {
         const errorObj = event?.error || event;
         console.error('[Ultravox] Error:', errorObj);
@@ -155,40 +110,82 @@ export function useUltravoxSession({
         onError(errorToReport);
       };
 
-      // Add event listeners
+      const localHandleStatusUpdate = async (event: any) => {
+        console.log('[Ultravox] Raw status event object:', event);
+
+        const currentSessionInstance = sessionRef.current; // Use sessionRef consistently
+        if (!currentSessionInstance) {
+            console.warn('[Ultravox] Status update but no current session in ref.');
+            return;
+        }
+        
+        const currentStatus = event.detail?.status;
+        // const previousStatus = event.detail?.previousStatus; // Not used in provided logic yet, but parsed
+
+        setCallStatus(currentStatus || null);
+        onStatusChange(currentStatus || 'unknown'); // Call prop callback
+
+        if (currentStatus === 'idle') {
+          console.log(`[Ultravox] In 'idle' state. Current session.micMuted: ${currentSessionInstance.micMuted}`);
+          if (currentSessionInstance.micMuted) {
+            console.log('[Ultravox] Session is idle, attempting to unmute microphone...');
+            try {
+              await currentSessionInstance.unmuteMic();
+              console.log('[Ultravox] Microphone unmuted successfully.');
+            } catch (unmuteError) {
+              console.error('[Ultravox] Error unmuting microphone when idle:', unmuteError);
+              onError(unmuteError instanceof Error ? unmuteError : new Error(String(unmuteError)));
+            }
+          } else {
+            console.log('[Ultravox] Session is idle, microphone is already unmuted.');
+          }
+        } else if (currentStatus === 'listening') {
+          console.log('[Ultravox] Session is listening (mic should be active).');
+        } else if (currentStatus === 'disconnected') {
+          const finalReason = currentSessionInstance.endReason || event.detail?.reason || 'unknown';
+          console.log(`[Ultravox] Session disconnected. Reason: ${finalReason}`);
+          setCallEndReason(finalReason);
+          onSessionEnd(); // Call prop callback
+
+          console.log('[Ultravox] Removing event listeners upon disconnect for session.');
+          currentSessionInstance.removeEventListener('transcripts', handleTranscript);
+          currentSessionInstance.removeEventListener('status', localHandleStatusUpdate);
+          currentSessionInstance.removeEventListener('error', handleError);
+          // Note: handleMicMuteChange removal is now correctly scoped
+          if (currentSessionInstance.micMutedNotifier && typeof (currentSessionInstance.micMutedNotifier as any).removeListener === 'function') {
+            (currentSessionInstance.micMutedNotifier as any).removeListener(handleMicMuteChange);
+          }
+
+          if (sessionRef.current === currentSessionInstance) {
+            sessionRef.current = null;
+          }
+          setSession(null); // Clear main session state
+        }
+      };
+      
+      // Add event listeners using the handlers defined above
       newSession.addEventListener('transcripts', handleTranscript);
-      newSession.addEventListener('status', handleStatusChange);
+      newSession.addEventListener('status', localHandleStatusUpdate); 
       newSession.addEventListener('error', handleError);
+      
+      if (newSession.micMutedNotifier && typeof (newSession.micMutedNotifier as any).addListener === 'function') {
+        console.log('[Ultravox] Adding micMutedNotifier event listener.');
+        (newSession.micMutedNotifier as any).addListener(handleMicMuteChange);
+      }
 
       console.log('[Ultravox] Joining call...');
       console.log('[Debug] Calling Ultravox SDK joinCall with joinUrl:', joinUrl);
       await newSession.joinCall(joinUrl);
       console.log('[Ultravox] Successfully joined call');
-
-      // Unmute microphone
-      try {
-        if (typeof newSession.unmuteMic === 'function') {
-          console.log('[Ultravox] Attempting to unmute microphone (SDK call)...'); // Added
-          newSession.unmuteMic();
-          console.log('[Ultravox] Microphone unmuted');
-        }
-      } catch (micError) {
-        console.error('[Ultravox] Error unmuting microphone:', micError);
-      }
-
-      sessionRef.current = newSession;
-      setSession(newSession);
+      
+      setSession(newSession); 
       setIsConnecting(false);
-
       return true;
     } catch (error: any) {
       console.error('[Ultravox] Error initializing session:', error);
       setIsConnecting(false);
 
       const appError = errorHandler.handle(error, { source: 'ultravox_init' });
-      // appError itself is an Error object, so it can be passed directly if its structure is suitable,
-      // or wrap its message in a new Error.
-      // Given appError has userMessage, it's better to pass a new Error with that message.
       onError(new Error(appError.userMessage || appError.message));
 
       toast({
@@ -196,34 +193,56 @@ export function useUltravoxSession({
         description: appError.userMessage || 'Could not connect to the interview service.',
         variant: 'destructive',
       });
-
-      if (newSession && typeof newSession.removeEventListener === 'function') {
-        console.log('[Ultravox] Cleaning up listeners due to join call error.');
-        newSession.removeEventListener('transcripts', handleTranscript);
-        newSession.removeEventListener('status', handleStatusChange);
-        newSession.removeEventListener('error', handleError);
+      
+      const sessionToClean = sessionRef.current; // Use the instance from the ref for cleanup
+      if (sessionToClean && typeof sessionToClean.removeEventListener === 'function') {
+        console.log('[Ultravox] Cleaning up listeners due to join call error on session instance from ref:', sessionToClean.id);
+        sessionToClean.removeEventListener('transcripts', handleTranscript); // handleTranscript is in scope
+        sessionToClean.removeEventListener('status', localHandleStatusUpdate); // localHandleStatusUpdate is in scope
+        sessionToClean.removeEventListener('error', handleError); // handleError is in scope
+        if (sessionToClean.micMutedNotifier && typeof (sessionToClean.micMutedNotifier as any).removeListener === 'function') {
+            console.log('[Ultravox] Removing micMutedNotifier listener due to join call error.');
+            (sessionToClean.micMutedNotifier as any).removeListener(handleMicMuteChange); // handleMicMuteChange is in scope
+        }
       }
+      
+      if (sessionRef.current) { 
+        sessionRef.current = null;
+      }
+      setSession(null); 
       return false;
     }
-  }, [onTranscriptUpdate, onStatusChange, onSessionEnd, onError, toast, errorHandler]);
+  }, [
+      onTranscriptUpdate, 
+      onStatusChange, 
+      onSessionEnd, 
+      onError, 
+      toast, 
+      errorHandler, 
+      // config variable is not directly used in useCallback, UltravoxSession might use env vars via process.env
+      setCallStatus, 
+      setCallEndReason
+    ]);
 
   /**
    * End the current session
    */
   const endSession = useCallback(async () => {
-    if (sessionRef.current && typeof sessionRef.current.leaveCall === 'function') {
+    const currentSession = sessionRef.current; // Capture current session from ref
+    if (currentSession && typeof currentSession.leaveCall === 'function') {
       try {
-        console.log('[Ultravox] Leaving call...');
-        await sessionRef.current.leaveCall();
-        console.log('[Ultravox] Successfully left call');
+        console.log('[Ultravox] endSession: Attempting to leave call...');
+        await currentSession.leaveCall(); // This should trigger 'disconnected' status event
+        console.log('[Ultravox] endSession: leaveCall promise resolved.');
       } catch (error) {
-        console.error('[Ultravox] Error leaving call:', error);
+        console.error('[Ultravox] endSession: Error during leaveCall:', error);
+        // Call onError prop, as this is an unexpected error during cleanup
+        onError(error instanceof Error ? error : new Error(String(error)));
       }
+    } else {
+      console.log('[Ultravox] endSession: No current session or leaveCall not available.');
     }
-
-    sessionRef.current = null;
-    setSession(null);
-  }, []);
+  }, [onError]); // Added onError as a dependency
 
   /**
    * Get current session transcripts
@@ -281,5 +300,7 @@ export function useUltravoxSession({
     getTranscripts,
     isMicMuted,
     toggleMic,
+    callStatus, // Added
+    callEndReason, // Added
   };
 }
