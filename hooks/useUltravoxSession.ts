@@ -182,11 +182,26 @@ export function useUltravoxSession({
         console.log('[Ultravox] Added event listener for "micMutedNotifier".'); // Confirmation log
       }
 
+      if (newSession.socket) {
+        const ws = newSession.socket;
+        console.log('[WebSocket RAW] Attempting to add raw event listeners to socket:', ws);
+        ws.onopen = (event) => console.log('[WebSocket RAW] Open:', event);
+        ws.onmessage = (event) => console.log('[WebSocket RAW] Message:', event.data); // Be careful logging message data if sensitive
+        ws.onerror = (event) => console.error('[WebSocket RAW] Error:', event);
+        ws.onclose = (event) => console.log('[WebSocket RAW] Close:', event.code, event.reason, event.wasClean);
+        console.log('[WebSocket RAW] Raw event listeners attached.');
+      } else {
+        console.log('[WebSocket RAW] Cannot attach listeners: newSession.socket is not available before joinCall.');
+      }
+
       console.log('[Ultravox] Joining call...');
       console.log('[Debug] Calling Ultravox SDK joinCall with joinUrl:', joinUrl);
       await newSession.joinCall(joinUrl);
       console.log('[Ultravox] Successfully joined call');
       console.log('[Ultravox] joinCall resolved. Session details:', { id: newSession.id, status: newSession.status, micMuted: newSession.micMuted, socketReadyState: newSession.socket?.readyState });
+      
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+      console.log('[Ultravox] 2-second delay complete. Current session status:', newSession.status, 'Socket readyState:', newSession.socket?.readyState);
       
       setSession(newSession); 
       setIsConnecting(false);
