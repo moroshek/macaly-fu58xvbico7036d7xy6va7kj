@@ -1,8 +1,14 @@
-"use client"; // Keep this
+import "./globals.css"; // Ensures CSS is applied
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import StableClientWrapper from "./stable-client-wrapper";
 
-import { useEffect } from 'react'; // Import useEffect
+const inter = Inter({ subsets: ["latin"] }); // Font initialization
 
-// All other original imports related to CSS, fonts, Metadata, StableClientWrapper remain removed for this test.
+export const metadata: Metadata = { // Original metadata
+  title: "MedIntake - AI-Powered Medical Intake Assistant",
+  description: "Expedite your medical intake process with our secure, HIPAA-compliant AI assistant.",
+};
 
 export default function RootLayout({
   children,
@@ -17,10 +23,11 @@ export default function RootLayout({
 
   return (
     <html lang="en">
-      {/* className and suppressHydrationWarning are temporarily removed */}
-      <body>
-        {/* StableClientWrapper is temporarily removed */}
-        {children}
+      {/* Ensures font class and hydration warning are on the body tag */}
+      <body className={inter.className} suppressHydrationWarning={true}> 
+        <StableClientWrapper>
+          {children}
+        </StableClientWrapper>
       </body>
     </html>
   );
