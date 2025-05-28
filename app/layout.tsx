@@ -15,6 +15,12 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // Direct console.log removed from here
+
+  useEffect(() => {
+    console.log("--- app/layout.tsx RootLayout useEffect running on CLIENT ---"); // Test log inside useEffect
+  }, []); // Empty dependency array ensures it runs once on mount
+
   return (
     <html lang="en">
       {/* Ensures font class and hydration warning are on the body tag */}
