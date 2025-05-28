@@ -29,6 +29,120 @@ import VoiceActivityIndicator from "@/components/VoiceActivityIndicator";
 import IntakeControlUI from "@/components/page/medical-intake/IntakeControlUI";
 import ResultsDisplay from "@/components/page/medical-intake/ResultsDisplay";
 
+// RemountDebugger Component Definition
+// 'use client'; // This is already at the top of the file
+// import { useEffect, useRef } from 'react'; // Imports are already at the top of the file
+
+interface RemountDebuggerProps {
+  children: React.ReactNode;
+  errorState?: string; // Pass current error state for better tracking
+  uiState?: string;    // Pass current UI state for correlation
+}
+
+const RemountDebugger = ({ children, errorState, uiState }: RemountDebuggerProps) => {
+  const mountCountRef = useRef(0);
+  const mountTimeRef = useRef<number[]>([]);
+  const componentNameRef = useRef('Page');
+
+  useEffect(() => {
+    mountCountRef.current += 1;
+    const currentTime = Date.now();
+    mountTimeRef.current.push(currentTime);
+
+    console.log(`🔍 ${componentNameRef.current} REMOUNT DEBUGGER - Mount #${mountCountRef.current}`);
+    console.log('📊 Mount History:', mountTimeRef.current.map(time => new Date(time).toLocaleTimeString()));
+    console.log('🎯 Current States:', { errorState, uiState });
+
+    // Check for previous unmount timing (implementing the other AI's suggestion)
+    if (typeof window !== 'undefined') {
+      const lastUnmountTime = sessionStorage.getItem('last-page-unmount');
+      if (lastUnmountTime) {
+        const timeSinceUnmount = currentTime - parseInt(lastUnmountTime);
+        console.log(`⏱️ Time since last unmount: ${timeSinceUnmount}ms`);
+
+        if (timeSinceUnmount < 1000) {
+          console.error(`🚨 VERY RAPID MOUNT after unmount! Only ${timeSinceUnmount}ms gap`);
+        }
+      }
+    }
+
+    // Check for rapid remounts
+    if (mountTimeRef.current.length > 1) {
+      const lastMount = mountTimeRef.current[mountTimeRef.current.length - 2];
+      const timeDiff = currentTime - lastMount;
+
+      if (timeDiff < 2000) {
+        console.error(`⚠️ RAPID REMOUNT DETECTED! Only ${timeDiff}ms since last mount`);
+        console.error('🔍 Component remount stack trace:');
+        console.trace();
+
+        // Enhanced diagnosis based on current state
+        console.error('🔍 Mount Context Analysis:');
+        console.error(`  • Error State: ${errorState || 'none'}`);
+        console.error(`  • UI State: ${uiState || 'unknown'}`);
+        console.error('🔍 Potential remount causes to investigate:');
+        console.error('  1. Parent component conditional rendering');
+        console.error('  2. Route/navigation changes');
+        console.error('  3. Error boundary triggers');
+        console.error('  4. State management causing key changes');
+        console.error('  5. Next.js error boundaries (app/error.tsx)');
+        console.error('  6. useAppState causing parent re-renders');
+      }
+    }
+
+    // Enhanced error-related remount detection
+    if (typeof window !== 'undefined') {
+      const errorInUrl = window.location.href.includes('error');
+      const errorInStorage = localStorage.getItem('app-error') || sessionStorage.getItem('app-error');
+
+      if (errorInUrl || errorInStorage || errorState) {
+        console.warn('🚨 Error-related state detected during mount:', {
+          errorInUrl,
+          errorInStorage: !!errorInStorage,
+          errorStateProp: errorState,
+          uiStateProp: uiState,
+          currentUrl: window.location.href
+        });
+      }
+
+      // Check if this mount happened after an error state change
+      const lastErrorStateChange = sessionStorage.getItem('last-error-state-change');
+      if (lastErrorStateChange) {
+        const timeSinceError = currentTime - parseInt(lastErrorStateChange);
+        if (timeSinceError < 1000) {
+          console.error(`🚨 MOUNT AFTER ERROR STATE CHANGE! Only ${timeSinceError}ms since error state changed`);
+        }
+      }
+
+      // Track this mount in relation to error states
+      if (errorState === 'error' || uiState === 'error') {
+        sessionStorage.setItem('last-error-state-change', currentTime.toString());
+        console.warn('📍 Recording error state change timestamp for correlation');
+      }
+    }
+
+    // Keep only last 10 mount times to prevent memory growth
+    if (mountTimeRef.current.length > 10) {
+      mountTimeRef.current = mountTimeRef.current.slice(-10);
+    }
+
+    return () => {
+      console.log(`🔍 ${componentNameRef.current} REMOUNT DEBUGGER - Unmount #${mountCountRef.current}`);
+      console.log('🎯 States at unmount:', { errorState, uiState });
+      console.log('🔍 Unmount stack trace:');
+      console.trace();
+
+      // Record unmount time for analysis (implementing the other AI's suggestion)
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('last-page-unmount', currentTime.toString());
+        console.log('📍 Recorded unmount timestamp for next mount correlation');
+      }
+    };
+  }, []); // Empty deps - only runs on mount/unmount
+
+  return <>{children}</>;
+};
+
 // Error Overlay Component
 const ErrorOverlay: React.FC<{
   errorMessage: string;
@@ -348,168 +462,173 @@ export default function Page() {
   }, [resetAllAndStartNew]);
 
   return (
-    <div className="relative flex flex-col min-h-screen">
-      {process.env.NODE_ENV === 'development' && (
-        <button
-          onClick={handleDebugClick}
-          className="fixed top-4 right-4 bg-red-500 text-white p-2 rounded z-50 text-xs font-mono"
-          style={{ zIndex: Z_INDEX_DEBUG_BUTTON }}
-        >
-          Debug State
-        </button>
-      )}
+    <RemountDebugger
+      errorState={state.errorMessage ? 'error' : undefined}
+      uiState={state.uiState}
+    >
+      <div className="relative flex flex-col min-h-screen">
+        {process.env.NODE_ENV === 'development' && (
+          <button
+            onClick={handleDebugClick}
+            className="fixed top-4 right-4 bg-red-500 text-white p-2 rounded z-50 text-xs font-mono"
+            style={{ zIndex: Z_INDEX_DEBUG_BUTTON }}
+          >
+            Debug State
+          </button>
+        )}
 
-      <header className="container mx-auto py-4 px-4 md:px-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-full bg-teal-500 flex items-center justify-center">
-              <span className="text-white font-semibold">AI</span>
-            </div>
-            <span className="font-semibold text-lg">MedIntake</span>
-          </div>
-          {(state.uiState === 'interviewing' || state.uiState === 'initiating' || !state.isOnline) && (
+        <header className="container mx-auto py-4 px-4 md:px-6">
+          <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
-              <div className={`w-2 h-2 rounded-full ${
-                !state.isOnline ? 'bg-red-500 animate-pulse' :
-                state.uiState === 'initiating' ? 'bg-orange-400 animate-pulse' :
-                'bg-green-500'
-              }`} />
-              <span className="text-sm text-gray-500">
-                {!state.isOnline ? 'Connection Lost' :
-                  state.uiState === 'initiating' ? 'Connecting...' :
-                  'Connected'}
-              </span>
-            </div>
-          )}
-        </div>
-      </header>
-
-      <VoiceActivityIndicator
-        uvStatus={state.uvStatus}
-        isInterviewActive={state.isInterviewActive}
-      />
-
-      <DevTray
-        appPhase={state.uiState}
-        sessionStatus={state.uvStatus}
-        sessionId={state.callId}
-        isSessionActive={state.isInterviewActive}
-        micStatus={ultravoxSessionHook.session ? (ultravoxSessionHook.isMicMuted() ? 'muted' : 'active') : 'inactive'}
-        utteranceCount={state.currentTranscript.length}
-        lastUtteranceSource={state.currentTranscript.length > 0 ? state.currentTranscript[state.currentTranscript.length - 1].speaker : null}
-        submittedDataLength={state.currentTranscript.length > 0 ? state.currentTranscript.map(u => u.text).join('').length : null}
-        backendCommsLog={logger.getBackendComms()}
-        outputSet1Received={!!state.summaryData}
-        outputSet1FieldCount={state.summaryData ? Object.keys(state.summaryData).filter(k => state.summaryData && state.summaryData[k as keyof SummaryData] !== null).length : null}
-        outputSet2Received={!!state.analysisData}
-        outputSet2ApproxLength={state.analysisData ? state.analysisData.length : null}
-        clientEventsLog={logger.getClientEvents().map(e => `${new Date(e.timestamp).toLocaleTimeString()}: ${e.message}`)}
-      />
-
-      <main className="flex-1">
-        <section className="container mx-auto py-12 md:py-24 px-4 md:px-6">
-          <div className="grid grid-cols-1 gap-12">
-            <div className="space-y-6 max-w-2xl mx-auto text-center md:text-left md:mx-0">
-              <div className="space-y-2">
-                <h1 className="text-4xl md:text-5xl font-bold tracking-tight">
-                  Intelligent, Faster Medical Intake
-                </h1>
-                <p className="text-xl text-gray-500">
-                  Patient speaks to friendly AI agent. Intake summary provided instantly.
-                  State of the art medical model provides insights to the provider.
-                </p>
+              <div className="w-8 h-8 rounded-full bg-teal-500 flex items-center justify-center">
+                <span className="text-white font-semibold">AI</span>
               </div>
-              <div className="flex flex-wrap gap-3 justify-center md:justify-start">
-                <Badge variant="outline" className="flex items-center gap-1 py-1.5 px-2.5 bg-white">
-                  <Shield className="h-3.5 w-3.5 text-teal-500" />
-                  <span>HIPAA Compliant</span>
-                </Badge>
-                <Badge variant="outline" className="flex items-center gap-1 py-1.5 px-2.5 bg-white">
-                  <Lock className="h-3.5 w-3.5 text-teal-500" />
-                  <span>Secure Encryption</span>
-                </Badge>
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  <span className="text-sm font-medium text-blue-900">Available in English</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-orange-400 rounded-full animate-pulse"></div>
-                  <span className="text-sm text-blue-700">Spanish - Coming Soon</span>
-                </div>
-                <p className="text-xs text-blue-600">
-                  Multi-language support powered by our advanced AI technology
-                </p>
-              </div>
-              <p className="text-sm text-gray-500">
-                This is beta software. Do not use this as medical advice. It is for informational purposes only.
-              </p>
-              <p className="text-xs text-gray-400 mt-2">
-                U.S. Provisional Patent Application (No. 63/811,932) - Patent Pending
-              </p>
+              <span className="font-semibold text-lg">MedIntake</span>
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <IntakeControlUI
-                uiState={state.uiState}
-                uvStatus={state.uvStatus}
-                hasAudioPermission={state.hasAudioPermission}
-                errorMessage={state.errorMessage}
-                currentTranscriptLength={state.currentTranscript.length}
-                getStatusText={getStatusText}
-                handleStartInterview={handleStartInterview}
-                handleEndInterview={handleEndInterview}
-                resetAllAndStartNew={resetAllAndStartNew}
-                resetAll={appStateSetters.resetAll}
-                checkMicrophonePermissions={checkMicrophonePermissions}
-                setAudioPermission={appStateSetters.setAudioPermission}
-                setError={appStateSetters.setError}
-              />
-              <ResultsDisplay
-                uiState={state.uiState}
-                summaryData={state.summaryData}
-                analysisData={state.analysisData}
-                formatSummaryField={formatSummaryField}
-              />
-            </div>
+            {(state.uiState === 'interviewing' || state.uiState === 'initiating' || !state.isOnline) && (
+              <div className="flex items-center space-x-2">
+                <div className={`w-2 h-2 rounded-full ${
+                  !state.isOnline ? 'bg-red-500 animate-pulse' :
+                  state.uiState === 'initiating' ? 'bg-orange-400 animate-pulse' :
+                  'bg-green-500'
+                }`} />
+                <span className="text-sm text-gray-500">
+                  {!state.isOnline ? 'Connection Lost' :
+                    state.uiState === 'initiating' ? 'Connecting...' :
+                    'Connected'}
+                </span>
+              </div>
+            )}
           </div>
-        </section>
+        </header>
 
-        <section className="bg-gray-50 py-16">
-          <div className="container mx-auto px-4 md:px-6">
-            {/* ... How It Works section ... */}
-          </div>
-        </section>
-
-        <section className="py-16">
-          <div className="container mx-auto px-4 md:px-6">
-            {/* ... Enterprise Integration Options section ... */}
-          </div>
-        </section>
-
-        <section className="bg-gray-50 py-16">
-          <div className="container mx-auto px-4 md:px-6">
-            {/* ... About BuildAI section ... */}
-          </div>
-        </section>
-      </main>
-
-      <footer className="bg-gray-100 py-8">
-        <div className="container mx-auto px-4 md:px-6">
-          {/* ... footer section ... */}
-        </div>
-      </footer>
-
-      {/* ERROR OVERLAY - This prevents the Page component from unmounting */}
-      {state.uiState === 'error' && (
-        <ErrorOverlay
-          errorMessage={state.errorMessage}
-          onRetry={handleErrorRetry}
-          onReset={handleErrorReset}
+        <VoiceActivityIndicator
+          uvStatus={state.uvStatus}
+          isInterviewActive={state.isInterviewActive}
         />
-      )}
-    </div>
+
+        <DevTray
+          appPhase={state.uiState}
+          sessionStatus={state.uvStatus}
+          sessionId={state.callId}
+          isSessionActive={state.isInterviewActive}
+          micStatus={ultravoxSessionHook.session ? (ultravoxSessionHook.isMicMuted() ? 'muted' : 'active') : 'inactive'}
+          utteranceCount={state.currentTranscript.length}
+          lastUtteranceSource={state.currentTranscript.length > 0 ? state.currentTranscript[state.currentTranscript.length - 1].speaker : null}
+          submittedDataLength={state.currentTranscript.length > 0 ? state.currentTranscript.map(u => u.text).join('').length : null}
+          backendCommsLog={logger.getBackendComms()}
+          outputSet1Received={!!state.summaryData}
+          outputSet1FieldCount={state.summaryData ? Object.keys(state.summaryData).filter(k => state.summaryData && state.summaryData[k as keyof SummaryData] !== null).length : null}
+          outputSet2Received={!!state.analysisData}
+          outputSet2ApproxLength={state.analysisData ? state.analysisData.length : null}
+          clientEventsLog={logger.getClientEvents().map(e => `${new Date(e.timestamp).toLocaleTimeString()}: ${e.message}`)}
+        />
+
+        <main className="flex-1">
+          <section className="container mx-auto py-12 md:py-24 px-4 md:px-6">
+            <div className="grid grid-cols-1 gap-12">
+              <div className="space-y-6 max-w-2xl mx-auto text-center md:text-left md:mx-0">
+                <div className="space-y-2">
+                  <h1 className="text-4xl md:text-5xl font-bold tracking-tight">
+                    Intelligent, Faster Medical Intake
+                  </h1>
+                  <p className="text-xl text-gray-500">
+                    Patient speaks to friendly AI agent. Intake summary provided instantly.
+                    State of the art medical model provides insights to the provider.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3 justify-center md:justify-start">
+                  <Badge variant="outline" className="flex items-center gap-1 py-1.5 px-2.5 bg-white">
+                    <Shield className="h-3.5 w-3.5 text-teal-500" />
+                    <span>HIPAA Compliant</span>
+                  </Badge>
+                  <Badge variant="outline" className="flex items-center gap-1 py-1.5 px-2.5 bg-white">
+                    <Lock className="h-3.5 w-3.5 text-teal-500" />
+                    <span>Secure Encryption</span>
+                  </Badge>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <span className="text-sm font-medium text-blue-900">Available in English</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-orange-400 rounded-full animate-pulse"></div>
+                    <span className="text-sm text-blue-700">Spanish - Coming Soon</span>
+                  </div>
+                  <p className="text-xs text-blue-600">
+                    Multi-language support powered by our advanced AI technology
+                  </p>
+                </div>
+                <p className="text-sm text-gray-500">
+                  This is beta software. Do not use this as medical advice. It is for informational purposes only.
+                </p>
+                <p className="text-xs text-gray-400 mt-2">
+                  U.S. Provisional Patent Application (No. 63/811,932) - Patent Pending
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <IntakeControlUI
+                  uiState={state.uiState}
+                  uvStatus={state.uvStatus}
+                  hasAudioPermission={state.hasAudioPermission}
+                  errorMessage={state.errorMessage}
+                  currentTranscriptLength={state.currentTranscript.length}
+                  getStatusText={getStatusText}
+                  handleStartInterview={handleStartInterview}
+                  handleEndInterview={handleEndInterview}
+                  resetAllAndStartNew={resetAllAndStartNew}
+                  resetAll={appStateSetters.resetAll}
+                  checkMicrophonePermissions={checkMicrophonePermissions}
+                  setAudioPermission={appStateSetters.setAudioPermission}
+                  setError={appStateSetters.setError}
+                />
+                <ResultsDisplay
+                  uiState={state.uiState}
+                  summaryData={state.summaryData}
+                  analysisData={state.analysisData}
+                  formatSummaryField={formatSummaryField}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-gray-50 py-16">
+            <div className="container mx-auto px-4 md:px-6">
+              {/* ... How It Works section ... */}
+            </div>
+          </section>
+
+          <section className="py-16">
+            <div className="container mx-auto px-4 md:px-6">
+              {/* ... Enterprise Integration Options section ... */}
+            </div>
+          </section>
+
+          <section className="bg-gray-50 py-16">
+            <div className="container mx-auto px-4 md:px-6">
+              {/* ... About BuildAI section ... */}
+            </div>
+          </section>
+        </main>
+
+        <footer className="bg-gray-100 py-8">
+          <div className="container mx-auto px-4 md:px-6">
+            {/* ... footer section ... */}
+          </div>
+        </footer>
+
+        {/* ERROR OVERLAY - This prevents the Page component from unmounting */}
+        {state.uiState === 'error' && (
+          <ErrorOverlay
+            errorMessage={state.errorMessage}
+            onRetry={handleErrorRetry}
+            onReset={handleErrorReset}
+          />
+        )}
+      </div>
+    </RemountDebugger>
   );
 }
