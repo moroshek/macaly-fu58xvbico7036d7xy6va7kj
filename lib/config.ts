@@ -20,7 +20,7 @@ export interface AppConfig {
 }
 
 const defaultConfig: AppConfig = {
-  apiBaseUrl: process.env.NEXT_PUBLIC_BACKEND_API_URL || 'https://ai-medical-intake-service-191450583446.us-central1.run.app',
+  apiBaseUrl: process.env.NEXT_PUBLIC_BACKEND_API_URL || '',
   ultravoxTimeoutMs: 30000,
   transcriptSubmissionTimeoutMs: 120000,
   maxRetries: 3,
