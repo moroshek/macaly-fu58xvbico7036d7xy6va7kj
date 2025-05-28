@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   UI_STATES,
   UIState,
@@ -284,24 +284,46 @@ export const useInterviewManager = (deps: UseInterviewManagerProps): InterviewMa
     setTimeout(() => handleStartInterview(), START_INTERVIEW_DELAY_MS);
   }, [appStateResetAll, logger.clearLogs, handleStartInterview, START_INTERVIEW_DELAY_MS]);
 
+  const hasHandledDisconnectionRef = useRef(false);
+
   // useEffect to react to Ultravox callStatus changes (via appState.uvStatus)
   useEffect(() => {
     if (appState.uvStatus === 'idle') {
-      // This indicates the session is established and ready, but not yet actively listening.
-      // We might not setInterviewActive(true) here yet, depending on desired UX.
-      // For now, just logging. The 'listening' state will confirm active interview.
       logger.logClientEvent(`[InterviewManager] Ultravox session is ready (status: ${appState.uvStatus}). Waiting for 'listening'.`);
+      // Reset flag if session is in a non-terminal state
+      if (hasHandledDisconnectionRef.current) {
+          console.log(`[InterviewManager] Resetting hasHandledDisconnection flag as status is now ${appState.uvStatus}.`);
+          hasHandledDisconnectionRef.current = false;
+      }
     } else if (appState.uvStatus === 'listening') {
       logger.logClientEvent(`[InterviewManager] Ultravox session is active (status: ${appState.uvStatus}). Interview started.`);
       setInterviewActive(true);
-      // Potentially set UI_STATE to INTERVIEWING here if not already handled by onStatusChange in page.tsx
-      // setUiState(UI_STATES.INTERVIEWING); // Consider if this is the right place
-    } else if (appState.uvStatus === 'disconnected' || appState.uvStatus === 'error' || appState.uvStatus === 'failed') {
-      // Ensure interview is marked as inactive if UV session disconnects or errors out
-      logger.logClientEvent(`[InterviewManager] Ultravox session ended or failed (status: ${appState.uvStatus}). Marking interview inactive.`);
-      setInterviewActive(false);
+      // Reset flag if session is in a non-terminal state
+      if (hasHandledDisconnectionRef.current) {
+          console.log(`[InterviewManager] Resetting hasHandledDisconnection flag as status is now ${appState.uvStatus}.`);
+          hasHandledDisconnectionRef.current = false;
+      }
+      // Potentially set UI_STATE to INTERVIEWING here if not already handled
+      // setUiState(UI_STATES.INTERVIEWING); 
+    } else if ((appState.uvStatus === 'disconnected' || appState.uvStatus === 'error' || appState.uvStatus === 'failed')) {
+      if (!hasHandledDisconnectionRef.current) {
+        console.log(`[InterviewManager] Handling disconnection (status: ${appState.uvStatus}) ONCE.`);
+        logger.logClientEvent(`[InterviewManager] Ultravox session ended or failed (status: ${appState.uvStatus}). Marking interview inactive.`);
+        setInterviewActive(false);
+        // Potentially set UI_STATE to ERROR or IDLE here
+        // setUiState(UI_STATES.ERROR); // Or appropriate terminal UI state
+        hasHandledDisconnectionRef.current = true;
+      } else {
+        console.log(`[InterviewManager] Disconnection (status: ${appState.uvStatus}) already handled.`);
+      }
+    } else if (appState.uvStatus !== 'disconnected' && appState.uvStatus !== 'error' && appState.uvStatus !== 'failed') {
+      // This is the more general reset condition from the issue description
+      if (hasHandledDisconnectionRef.current) {
+          console.log(`[InterviewManager] Resetting hasHandledDisconnection flag as status is now ${appState.uvStatus}.`);
+      }
+      hasHandledDisconnectionRef.current = false;
     }
-  }, [appState.uvStatus, setInterviewActive, logger, setUiState]); // Added setUiState to deps if used
+  }, [appState.uvStatus, setInterviewActive, logger, setUiState]); 
 
   return {
     handleStartInterview,
