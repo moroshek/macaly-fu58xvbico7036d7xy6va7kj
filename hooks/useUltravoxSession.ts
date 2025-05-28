@@ -6,6 +6,214 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { UltravoxSession } from 'ultravox-client';
 import { useToast } from '@/hooks/use-toast';
 import { ErrorHandler } from '@/lib/error-handler';
+
+// Enhanced WebSocket debugging function
+const debugWebSocketConnection = (joinUrl: string) => {
+  console.log('🔍 WebSocket Connection Debug Info:');
+  console.log('URL:', joinUrl);
+  console.log('Protocol:', new URL(joinUrl).protocol);
+  console.log('Host:', new URL(joinUrl).host);
+  console.log('Search Params:', Object.fromEntries(new URL(joinUrl).searchParams));
+  
+  // Browser environment checks
+  console.log('Browser Info:', {
+    userAgent: navigator.userAgent,
+    onLine: navigator.onLine,
+    cookieEnabled: navigator.cookieEnabled,
+    language: navigator.language,
+  });
+  
+  // Network timing
+  console.log('Connection Timing:', new Date().toISOString());
+  
+  // Check for known problematic networks
+  const hostname = window.location.hostname;
+  console.log('Current hostname:', hostname);
+  
+  if (hostname === 'localhost' || hostname.includes('127.0.0.1')) {
+    console.log('⚠️ Running on localhost - this could cause CORS issues with WebSocket');
+  }
+};
+
+// Enhanced error analysis for 1006 codes
+const analyzeWebSocket1006Error = (ws: WebSocket, url: string) => {
+  console.error('🚨 WebSocket 1006 Analysis:');
+  console.error('Common causes:');
+  console.error('1. Server crashed or restarted');
+  console.error('2. Network proxy/firewall blocked connection');
+  console.error('3. Browser security policy blocked connection');
+  console.error('4. CORS issues');
+  console.error('5. Invalid WebSocket subprotocol');
+  
+  console.error('Connection details:');
+  console.error('- URL:', url);
+  console.error('- Ready State:', ws.readyState);
+  console.error('- Protocol:', ws.protocol);
+  console.error('- Extensions:', ws.extensions);
+  
+  // Network connectivity test
+  fetch('https://www.google.com/favicon.ico', { method: 'HEAD', mode: 'no-cors' })
+    .then(() => console.log('✅ Basic internet connectivity: OK'))
+    .catch(() => console.error('❌ Basic internet connectivity: FAILED'));
+    
+  // Ultravox API connectivity test
+  fetch('https://api.ultravox.ai', { method: 'HEAD', mode: 'no-cors' })
+    .then(() => console.log('✅ Ultravox API reachable: OK'))
+    .catch(() => console.error('❌ Ultravox API reachable: FAILED'));
+};
+
+// Test WebSocket with progressive fallbacks
+const testWebSocketWithFallbacks = async (joinUrl: string) => {
+  console.log('🧪 Testing WebSocket with progressive fallbacks...');
+  
+  // Test 1: Basic connection test
+  try {
+    const ws = new WebSocket(joinUrl);
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        ws.close();
+        resolve(false);
+      }, 5000);
+      
+      ws.onopen = () => {
+        clearTimeout(timeout);
+        console.log('✅ Basic WebSocket test: SUCCESS');
+        ws.close();
+        resolve(true);
+      };
+      
+      ws.onerror = (error) => {
+        clearTimeout(timeout);
+        console.error('❌ Basic WebSocket test: FAILED', error);
+        resolve(false);
+      };
+      
+      ws.onclose = (event) => {
+        clearTimeout(timeout);
+        if (event.code === 1006) {
+          console.error('❌ Basic WebSocket test: 1006 error during test');
+          analyzeWebSocket1006Error(ws, joinUrl);
+        }
+        resolve(false);
+      };
+    });
+  } catch (error) {
+    console.error('❌ WebSocket constructor failed:', error);
+    return false;
+  }
+};
+
+// Potential workarounds for 1006 errors
+const webSocket1006Workarounds = {
+  // Workaround 1: Add connection delay
+  async connectWithDelay(joinUrl: string, delayMs: number = 1000): Promise<WebSocket | null> {
+    console.log(`⏳ Attempting connection with ${delayMs}ms delay...`);
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+    
+    try {
+      return new WebSocket(joinUrl);
+    } catch (error) {
+      console.error('❌ Delayed connection failed:', error);
+      return null;
+    }
+  },
+
+  // Workaround 2: Retry with exponential backoff
+  async connectWithRetry(joinUrl: string, maxRetries: number = 3): Promise<WebSocket | null> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      console.log(`🔄 Connection attempt ${attempt}/${maxRetries}`);
+      
+      try {
+        const ws = new WebSocket(joinUrl);
+        
+        // Test if connection succeeds
+        const connected = await new Promise((resolve) => {
+          const timeout = setTimeout(() => resolve(false), 10000);
+          
+          ws.onopen = () => {
+            clearTimeout(timeout);
+            resolve(true);
+          };
+          
+          ws.onerror = () => {
+            clearTimeout(timeout);
+            resolve(false);
+          };
+          
+          ws.onclose = (event) => {
+            clearTimeout(timeout);
+            if (event.code === 1006) {
+              console.error(`❌ Attempt ${attempt}: 1006 error`);
+            }
+            resolve(false);
+          };
+        });
+        
+        if (connected) {
+          console.log(`✅ Connection successful on attempt ${attempt}`);
+          return ws;
+        } else {
+          ws.close();
+        }
+      } catch (error) {
+        console.error(`❌ Attempt ${attempt} failed:`, error);
+      }
+      
+      // Exponential backoff: 1s, 2s, 4s
+      if (attempt < maxRetries) {
+        const delay = Math.pow(2, attempt - 1) * 1000;
+        console.log(`⏳ Waiting ${delay}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    
+    console.error('❌ All connection attempts failed');
+    return null;
+  },
+
+  // Workaround 3: Check and modify URL parameters
+  modifyUrlForCompatibility(joinUrl: string): string {
+    const url = new URL(joinUrl);
+    
+    // Add some parameters that might help with compatibility
+    url.searchParams.set('timestamp', Date.now().toString());
+    url.searchParams.set('retryAttempt', '1');
+    
+    console.log('🔧 Modified URL for compatibility:', url.toString());
+    return url.toString();
+  }
+};
+
+// Main debugging function to call from your initializeSession
+export const debugWebSocket1006Issue = async (joinUrl: string) => {
+  console.log('🔍 Starting comprehensive WebSocket 1006 debugging...');
+  
+  debugWebSocketConnection(joinUrl);
+  
+  const basicTest = await testWebSocketWithFallbacks(joinUrl);
+  if (!basicTest) {
+    console.log('🔧 Basic test failed, trying workarounds...');
+    
+    // Try modified URL
+    const modifiedUrl = webSocket1006Workarounds.modifyUrlForCompatibility(joinUrl);
+    const modifiedTest = await testWebSocketWithFallbacks(modifiedUrl);
+    
+    if (modifiedTest) {
+      console.log('✅ Modified URL worked! Consider using this approach.');
+      return modifiedUrl;
+    }
+    
+    // Try with retry
+    const retryResult = await webSocket1006Workarounds.connectWithRetry(joinUrl);
+    if (retryResult) {
+      console.log('✅ Retry approach worked!');
+      retryResult.close(); // Clean up test connection
+      return joinUrl; // Original URL worked with retry
+    }
+  }
+  
+  return joinUrl; // Return original if all tests fail
+};
 import { getConfig } from '@/lib/config';
 import { testWebSocketConnection } from '@/lib/ultravox-debug';
 import { Utterance } from '@/app/page';
