@@ -54,10 +54,6 @@ function LayoutMountTracker({ children }: { children: React.ReactNode }) {
 }
 
 export default function StableClientWrapper({ children }: { children: React.ReactNode }) {
-  useEffect(() => { // Added this new useEffect
-    console.log('--- TEST LOG FROM StableClientWrapper useEffect ---');
-  }, []);
-
   return (
     <LayoutMountTracker>
       <StableWrapper>
