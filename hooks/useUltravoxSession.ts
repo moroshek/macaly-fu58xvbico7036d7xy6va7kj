@@ -94,19 +94,18 @@ export function useUltravoxSession({
       };
      
       const handleError = (event: any) => {
+        console.error('[Ultravox] SDK "error" event received:', event);
         const errorObj = event?.error || event;
-        console.error('[Ultravox] Error:', errorObj);
-        let errorToReport: Error;
+        // console.error('[Ultravox] Error:', errorObj); // Optional: Keep if useful for debugging raw error object
+        let extractedMessage = 'An unknown Ultravox error occurred.';
         if (errorObj instanceof Error) {
-          errorToReport = errorObj;
+          extractedMessage = errorObj.message;
         } else if (typeof errorObj?.message === 'string') {
-          errorToReport = new Error(errorObj.message);
+          extractedMessage = errorObj.message;
         } else if (typeof errorObj === 'string') {
-          errorToReport = new Error(errorObj);
-        } else {
-          errorToReport = new Error('An unknown Ultravox error occurred.');
+          extractedMessage = errorObj;
         }
-        onError(errorToReport);
+        onError(new Error("Ultravox SDK reported an error: " + extractedMessage));
       };
 
       const localHandleStatusUpdate = async (event: any) => {
@@ -153,6 +152,7 @@ export function useUltravoxSession({
           console.log('[Ultravox] Removing event listeners upon disconnect for session.');
           currentSessionInstance.removeEventListener('transcripts', handleTranscript);
           currentSessionInstance.removeEventListener('status', localHandleStatusUpdate);
+          console.log('[Ultravox] Removing event listener for "error".');
           currentSessionInstance.removeEventListener('error', handleError);
           // Note: handleMicMuteChange removal is now correctly scoped
           if (currentSessionInstance.micMutedNotifier && typeof (currentSessionInstance.micMutedNotifier as any).removeListener === 'function') {
@@ -186,17 +186,28 @@ export function useUltravoxSession({
       console.log('[Debug] Calling Ultravox SDK joinCall with joinUrl:', joinUrl);
       await newSession.joinCall(joinUrl);
       console.log('[Ultravox] Successfully joined call');
+      console.log('[Ultravox] joinCall resolved. Session details:', { id: newSession.id, status: newSession.status, micMuted: newSession.micMuted, socketReadyState: newSession.socket?.readyState });
       
       setSession(newSession); 
       setIsConnecting(false);
       return true;
     } catch (error: any) {
-      console.error('[Ultravox] Error initializing session:', error);
+      console.error('[Ultravox] joinCall REJECTED or other init error:', error);
       setIsConnecting(false);
 
-      const appError = errorHandler.handle(error, { source: 'ultravox_init' });
-      onError(new Error(appError.userMessage || appError.message));
+      // Determine the error message for onError callback
+      let errorForCallback: Error;
+      if (error instanceof Error) {
+        errorForCallback = error;
+      } else if (error && typeof error.message === 'string') {
+        errorForCallback = new Error(error.message);
+      } else {
+        errorForCallback = new Error('Ultravox initialization failed');
+      }
+      onError(errorForCallback);
 
+      // Existing errorHandler and toast logic
+      const appError = errorHandler.handle(error, { source: 'ultravox_init' });
       toast({
         title: 'Connection Error',
         description: appError.userMessage || 'Could not connect to the interview service.',
@@ -208,6 +219,7 @@ export function useUltravoxSession({
         console.log('[Ultravox] Cleaning up listeners due to join call error on session instance from ref:', sessionToClean.id);
         sessionToClean.removeEventListener('transcripts', handleTranscript); // handleTranscript is in scope
         sessionToClean.removeEventListener('status', localHandleStatusUpdate); // localHandleStatusUpdate is in scope
+        console.log('[Ultravox] Removing event listener for "error".');
         sessionToClean.removeEventListener('error', handleError); // handleError is in scope
         if (sessionToClean.micMutedNotifier && typeof (sessionToClean.micMutedNotifier as any).removeListener === 'function') {
             console.log('[Ultravox] Removing micMutedNotifier listener due to join call error.');
