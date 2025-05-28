@@ -15,6 +15,7 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  console.log("--- app/layout.tsx RootLayout component is rendering ---");
   return (
     <html lang="en">
       <body className={inter.className} suppressHydrationWarning={true}>
