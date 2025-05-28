@@ -297,20 +297,38 @@ export function useUltravoxSession({
         // setSession(null); // Not strictly needed here as it wasn't set to newSession yet
         return false; // Indicate joinCall invocation failed
       }
-}, [
-        onTranscriptUpdate,
-        onStatusChange,
-        onSessionEnd,
-        onError,
-        toast,
-        errorHandler,
-        setIsConnecting,
-        setCallStatus,
-        setCallEndReason,
-        setSession,
-        sessionRef,
-        prevStatusRef
-      ]);
+    } catch (error: any) {
+      console.error('[Ultravox] Error during session initialization:', error);
+      setIsConnecting(false);
+
+      let errorForCallback: Error;
+      if (error instanceof Error) {
+        errorForCallback = error;
+      } else if (error && typeof error.message === 'string') {
+        errorForCallback = new Error(error.message);
+      } else {
+        errorForCallback = new Error('Session initialization failed');
+      }
+      onError(errorForCallback);
+
+      const appError = errorHandler.handle(error, { source: 'ultravox_session_init' });
+      toast({
+        title: 'Initialization Error',
+        description: appError.userMessage || 'Could not initialize the interview session.',
+        variant: 'destructive',
+      });
+
+      return false;
+    }
+  }, [
+    onTranscriptUpdate,
+    onStatusChange,
+    onSessionEnd,
+    onError,
+    toast,
+    errorHandler,
+    session
+  ]);
 
   /**
    * End the current session
@@ -388,7 +406,7 @@ export function useUltravoxSession({
         });
       }
     };
-  }, []); // EMPTY DEPENDENCY ARRAY ensures this cleanup only runs on unmount
+  }, [onError]); // Added onError as dependency
 
   return {
     session,
