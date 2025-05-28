@@ -56,6 +56,7 @@ export function useUltravoxSession({
       }
 
       console.log('[Ultravox] Creating new session');
+
       const sessionOptions = { experimentalMessages: new Set() };
       console.log('[Debug] Initializing UltravoxSession with options (experimentalMessages set to new Set()):', { experimentalMessages: 'new Set()' });
       const newSession = new UltravoxSession(sessionOptions);
@@ -65,7 +66,7 @@ export function useUltravoxSession({
       const handleMicMuteChange = (muted: boolean) => {
         console.log(`[Ultravox] micMutedNotifier event: Microphone is now ${muted ? 'MUTED' : 'UNMUTED'}`);
       };
-
+      
       const handleTranscript = () => {
         const currentSession = sessionRef.current;
         if (!currentSession) {
@@ -92,7 +93,7 @@ export function useUltravoxSession({
           console.error('[Ultravox] Error processing transcript:', err);
         }
       };
-      
+
       const handleError = (event: any) => {
         const errorObj = event?.error || event;
         console.error('[Ultravox] Error:', errorObj);
