@@ -7,7 +7,27 @@ const useMicrophonePermission = () => {
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
   const requestPermission = useCallback(async () => {
+    if (navigator.permissions && navigator.permissions.query) {
+      try {
+        const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName }); // Added 'as PermissionName' for TS
+        console.log('[Debug] Initial microphone permission status:', permissionStatus.state);
+        permissionStatus.onchange = () => {
+          console.log('[Debug] Microphone permission status changed to:', permissionStatus.state);
+          // Optionally, update component state based on this change
+          setHasPermission(permissionStatus.state === 'granted');
+          if (permissionStatus.state === 'denied') {
+            setPermissionError('Microphone access was denied after initial check. Please allow microphone access and refresh.');
+          }
+        };
+      } catch (e) {
+        console.error('[Debug] Error querying microphone permission:', e);
+      }
+    } else {
+      console.log('[Debug] navigator.permissions.query API not available.');
+    }
+
     try {
+      console.log('[Debug] Attempting to request microphone access...');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       setHasPermission(true);
       setPermissionError(null);
@@ -15,7 +35,7 @@ const useMicrophonePermission = () => {
       stream.getTracks().forEach(track => track.stop());
       return true;
     } catch (error) {
-      console.error('Microphone permission error:', error);
+      console.error('[Debug] getUserMedia error object:', error);
       setHasPermission(false);
       
       if (error instanceof DOMException) {
