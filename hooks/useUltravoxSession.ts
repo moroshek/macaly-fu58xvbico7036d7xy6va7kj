@@ -63,6 +63,24 @@ export function useUltravoxSession({
       const newSession = new UltravoxSession(sessionOptions);
       sessionRef.current = newSession; // Assign to sessionRef early
 
+      // Connection Diagnostics
+      const diagnosticInfo = {
+        joinUrl,
+        protocol: new URL(joinUrl).protocol,
+        hostname: new URL(joinUrl).hostname,
+        params: Object.fromEntries(new URL(joinUrl).searchParams),
+        timestamp: new Date().toISOString(),
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A',
+        isOnline: typeof navigator !== 'undefined' ? navigator.onLine : 'N/A',
+      };
+      console.log("[Ultravox] Connection Diagnostics:", diagnosticInfo);
+
+      if (!joinUrl.startsWith('ws://') && !joinUrl.startsWith('wss://')) {
+        const protocolError = new Error(`Invalid WebSocket URL protocol: ${diagnosticInfo.protocol}`);
+        onError(protocolError);
+        throw protocolError;
+      }
+
       // Define ALL event handlers here, once, so they are in scope for add/remove.
       // NOTE: Event listener attachment is moved before joinCall as per requirements.
       const handleMicMuteChange = (muted: boolean) => {
@@ -111,9 +129,25 @@ export function useUltravoxSession({
         onError(new Error("Ultravox SDK reported an error: " + extractedMessage));
       };
 
+      let connectionTimeoutId: any = null;
+      const clearConnectionTimeout = () => {
+        if (connectionTimeoutId) {
+          clearTimeout(connectionTimeoutId);
+          connectionTimeoutId = null;
+          console.log('[Ultravox] Connection timeout cleared.');
+        }
+      };
+
       const localHandleStatusUpdate = async (event: any) => {
         const currentSessionInstance = sessionRef.current;
         const currentStatus = event.target?.status;
+
+        // Clear connection timeout if a terminal status is reached
+        if (currentStatus === 'idle' || currentStatus === 'listening' || currentStatus === 'disconnected') {
+          clearConnectionTimeout();
+        }
+
+        const eventTargetEndReason = event.target?.endReason;
         const eventTargetEndReason = event.target?.endReason;
 
         console.log(`[Ultravox] Status Event. Current: ${currentStatus}, Previous: ${prevStatusRef.current}, SDK Reason: ${eventTargetEndReason || 'N/A'}. Raw event:`, event);
@@ -244,15 +278,26 @@ export function useUltravoxSession({
       try {
         console.log('[Ultravox] Joining call...');
         console.log('[Debug] Calling Ultravox SDK joinCall with joinUrl:', joinUrl);
+
+        // Set the connection timeout
+        connectionTimeoutId = setTimeout(() => {
+          // Check connectionTimeoutId to prevent action if already cleared by a status update
+          if (sessionRef.current?.status === 'connecting' && connectionTimeoutId) {
+            console.error('[Ultravox] Connection attempt timed out after 15s while status was still "connecting".');
+            // Ensure onError is available in this scope (it's a prop of useUltravoxSession)
+            onError(new Error('Ultravox connection attempt timed out.'));
+            // Attempt to leave the call. This should trigger a 'disconnected' status,
+            // which will then also call clearConnectionTimeout via localHandleStatusUpdate.
+            sessionRef.current?.leaveCall().catch(e => console.warn('[Ultravox] Error leaving call on timeout:', e));
+          }
+          connectionTimeoutId = null; // Nullify after execution or if condition not met
+        }, 15000); // 15 seconds
+
         await newSession.joinCall(joinUrl);
-        console.log('[Ultravox] joinCall promise resolved. Session details immediately after resolution:', { 
-            id: newSession.id, 
-            status: newSession.status, 
-            micMuted: newSession.micMuted, 
-            socketReadyState: newSession.socket?.readyState 
-        });
-        // DO NOT call setSession(newSession) here. It's handled by localHandleStatusUpdate.
-        // The 2-second diagnostic delay has been removed.
+        console.log('[Ultravox] joinCall promise resolved. Waiting for status events to determine outcome and clear timeout.');
+        // If joinCall resolves very quickly AND status becomes 'idle'/'listening'/'disconnected' immediately,
+        // the status handler's clearConnectionTimeout should have already run.
+        // If status is still 'connecting', the timeout is still active and relevant.
         
         // Attach raw WebSocket listeners if socket is available, after joinCall has resolved
         if (newSession.socket) {
@@ -297,6 +342,7 @@ export function useUltravoxSession({
         setIsConnecting(false); // Still set isConnecting to false, but session state is handled by status updates
         return true; // Indicate joinCall was invoked successfully. Session establishment is async.
       } catch (error: any) {
+        clearConnectionTimeout(); // Clear timeout immediately if joinCall itself fails
         console.error('[Ultravox] Error during newSession.joinCall() invocation:', error);
         setIsConnecting(false);
 
