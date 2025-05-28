@@ -54,9 +54,9 @@ export function useUltravoxSession({
       }
 
       console.log('[Ultravox] Creating new session');
-      const newSession = new UltravoxSession({
-        experimentalMessages: true as any,
-      });
+      const sessionOptions = {}; // Removed experimentalMessages
+      console.log('[Debug] Initializing UltravoxSession with options (experimentalMessages removed):', sessionOptions);
+      const newSession = new UltravoxSession(sessionOptions);
 
       // Enhanced transcript handler
       const handleTranscript = (event: any) => {
@@ -183,6 +183,7 @@ export function useUltravoxSession({
       newSession.addEventListener('error', handleError);
 
       console.log('[Ultravox] Joining call...');
+      console.log('[Debug] Calling Ultravox SDK joinCall with joinUrl:', joinUrl);
       await newSession.joinCall(joinUrl);
       console.log('[Ultravox] Successfully joined call');
 
