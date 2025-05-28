@@ -28,6 +28,7 @@ export function useUltravoxSession({
   const [callStatus, setCallStatus] = useState<string | null>(null);
   const [callEndReason, setCallEndReason] = useState<string | null>(null);
   const sessionRef = useRef<any>(null);
+  const prevStatusRef = useRef<string | null>(null); // Added prevStatusRef
   const { toast } = useToast();
   const errorHandler = ErrorHandler.getInstance();
   const config = getConfig();
@@ -62,6 +63,7 @@ export function useUltravoxSession({
       sessionRef.current = newSession; // Assign to sessionRef early
 
       // Define ALL event handlers here, once, so they are in scope for add/remove.
+      // NOTE: Event listener attachment is moved before joinCall as per requirements.
       const handleMicMuteChange = (muted: boolean) => {
         console.log(`[Ultravox] micMutedNotifier event: Microphone is now ${muted ? 'MUTED' : 'UNMUTED'}`);
       };
@@ -109,156 +111,206 @@ export function useUltravoxSession({
       };
 
       const localHandleStatusUpdate = async (event: any) => {
-        console.log('[Ultravox] Raw status event object:', event);
+        const currentSessionInstance = sessionRef.current;
+        const currentStatus = event.target?.status;
+        const eventTargetEndReason = event.target?.endReason;
 
-        const currentSessionInstance = sessionRef.current; // Use sessionRef consistently
-        if (!currentSessionInstance) {
-            console.warn('[Ultravox] Status update but no current session in ref.');
+        console.log(`[Ultravox] Status Event. Current: ${currentStatus}, Previous: ${prevStatusRef.current}, SDK Reason: ${eventTargetEndReason || 'N/A'}. Raw event:`, event);
+        
+        if (!currentSessionInstance && currentStatus !== 'disconnected') { // Allow disconnected to proceed for cleanup even if ref is somehow null
+            console.warn('[Ultravox] Status update but no current session in ref and status is not disconnected. Ignoring event.');
             return;
         }
 
-        // Changed parsing from event.detail to event.target
-        const currentStatus = event.target?.status;
-        const previousStatus = event.target?.previousStatus; // Parsed, though not used in current logic flow
-        const eventTargetEndReason = event.target?.endReason;
+        onStatusChange(currentStatus || 'unknown'); // Call prop callback early
 
-        console.log(`[Ultravox] Parsed Status from event.target: ${currentStatus}, Prev: ${previousStatus || 'N/A'}, Reason from event.target: ${eventTargetEndReason || 'N/A'}`);
-        setCallStatus(currentStatus || null);
-        onStatusChange(currentStatus || 'unknown'); // Call prop callback
+        switch (currentStatus) {
+          case 'connecting':
+            console.log('[Ultravox] Session status connecting. Waiting for idle...');
+            setCallStatus('connecting');
+            // Do not call setSession or onSessionEnd here.
+            break;
 
-        if (currentStatus === 'idle') {
-          console.log(`[Ultravox] In 'idle' state. Current session.micMuted: ${currentSessionInstance.micMuted}`);
-          if (currentSessionInstance.micMuted) {
-            console.log('[Ultravox] Session is idle, attempting to unmute microphone...');
-            try {
-              await currentSessionInstance.unmuteMic();
-              console.log('[Ultravox] Microphone unmuted successfully.');
-            } catch (unmuteError) {
-              console.error('[Ultravox] Error unmuting microphone when idle:', unmuteError);
-              onError(unmuteError instanceof Error ? unmuteError : new Error(String(unmuteError)));
+          case 'idle':
+            console.log('[Client] Ultravox session is now idle. Session instance:', currentSessionInstance);
+            setSession(currentSessionInstance); // Provide session object to parent component
+            setCallStatus('idle');
+            
+            console.log('[Client] Attempting to unmute microphone as session is idle.');
+            if (currentSessionInstance && typeof currentSessionInstance.unmuteMic === 'function') {
+              try {
+                await currentSessionInstance.unmuteMic();
+                console.log('[Client] Microphone unmuted successfully via unmuteMic().');
+              } catch (error) {
+                console.error('[Client] Error calling unmuteMic():', error);
+                onError(error instanceof Error ? error : new Error(String(error)));
+              }
+            } else {
+              console.warn('[Client] unmuteMic function not available on current session instance or instance is null.');
             }
-          } else {
-            console.log('[Ultravox] Session is idle, microphone is already unmuted.');
-          }
-        } else if (currentStatus === 'listening') {
-          console.log('[Ultravox] Session is listening (mic should be active).');
-        } else if (currentStatus === 'disconnected') {
-          // Prioritize session instance's endReason, then event.target's endReason
-          const finalReason = currentSessionInstance.endReason || eventTargetEndReason || 'unknown';
-          console.log(`[Ultravox] Session disconnected. Reason: ${finalReason}`);
-          setCallEndReason(finalReason);
-          onSessionEnd(); // Call prop callback
+            break;
 
-          console.log('[Ultravox] Removing event listeners upon disconnect for session.');
-          currentSessionInstance.removeEventListener('transcripts', handleTranscript);
-          currentSessionInstance.removeEventListener('status', localHandleStatusUpdate);
-          console.log('[Ultravox] Removing event listener for "error".');
-          currentSessionInstance.removeEventListener('error', handleError);
-          // Note: handleMicMuteChange removal is now correctly scoped
-          if (currentSessionInstance.micMutedNotifier && typeof (currentSessionInstance.micMutedNotifier as any).removeListener === 'function') {
-            (currentSessionInstance.micMutedNotifier as any).removeListener(handleMicMuteChange);
-          }
+          case 'listening':
+            console.log('[Client] Ultravox session is now listening. Microphone is active.');
+            setCallStatus('listening');
+            // Fallback: if session is somehow not set by 'idle' but we reach 'listening'
+            if (!session && currentSessionInstance) {
+                console.warn("[Client] Session was not set by 'idle' status, setting it now due to 'listening' status.");
+                setSession(currentSessionInstance);
+            }
+            break;
 
-          if (sessionRef.current === currentSessionInstance) {
-            sessionRef.current = null;
-          }
-          setSession(null); // Clear main session state
+          case 'disconnected':
+            const reason = currentSessionInstance?.endReason || eventTargetEndReason || 'unknown';
+            console.log('[Ultravox] Session disconnected. Reason:', reason, 'Previous status was:', prevStatusRef.current);
+            setCallEndReason(reason);
+            setCallStatus('disconnected');
+
+            if (currentSessionInstance) {
+              console.log('[Ultravox] Removing event listeners upon disconnect for session:', currentSessionInstance.id);
+              // Ensure handlers are defined or passed in a way that they can be removed
+              // Assuming handleTranscript, localHandleStatusUpdate, handleError, handleMicMuteChange are accessible
+              currentSessionInstance.removeEventListener('transcripts', handleTranscript);
+              currentSessionInstance.removeEventListener('status', localHandleStatusUpdate);
+              currentSessionInstance.removeEventListener('error', handleError);
+              if (currentSessionInstance.micMutedNotifier && typeof (currentSessionInstance.micMutedNotifier as any).removeListener === 'function') {
+                (currentSessionInstance.micMutedNotifier as any).removeListener(handleMicMuteChange);
+              }
+            } else {
+                console.warn('[Ultravox] No currentSessionInstance found in ref during disconnect to remove listeners from.');
+            }
+            
+            // Determine if the disconnect implies an error for onSessionEnd
+            // This is a placeholder for more sophisticated error checking if needed
+            const disconnectError = (reason !== 'normal' && reason !== 'call_ended_by_user') ? new Error(`Session disconnected with reason: ${reason}`) : null;
+            
+            // Call onSessionEnd - ensure currentSessionInstance might be null if never established
+            if (onSessionEnd) {
+                // The original subtask description for onSessionEnd was:
+                // onSessionEnd(currentSessionInstance, null)
+                // However, currentSessionInstance here refers to the one from sessionRef.current
+                // which might be null if the session never reached a state where it was set.
+                // Also, the second parameter is for an error.
+                // Passing sessionRef.current (which could be null) and disconnectError.
+                onSessionEnd(); // Simplified based on existing props, adjust if error needs to be passed
+            }
+            
+            setSession(null); // Clear main session state from the hook's perspective
+            if (sessionRef.current) { // Clear the ref only if it was the one being disconnected
+                sessionRef.current = null;
+            }
+            break;
+            
+          default:
+            console.warn(`[Ultravox] Unhandled status event: ${currentStatus}`);
+            setCallStatus(currentStatus || 'unknown'); // Update with unknown status
+            break;
         }
+        prevStatusRef.current = currentStatus; // Update previous status
       };
       
       // Add event listeners using the handlers defined above
+      console.log('[Ultravox] Adding event listeners for "transcripts", "status", "error", and "micMutedNotifier".');
       newSession.addEventListener('transcripts', handleTranscript);
       console.log('[Ultravox] Added event listener for "transcripts".');
 
-      newSession.addEventListener('status', localHandleStatusUpdate); 
+      newSession.addEventListener('status', localHandleStatusUpdate);
       console.log('[Ultravox] Added event listener for "status".');
-      
+
       newSession.addEventListener('error', handleError);
       console.log('[Ultravox] Added event listener for "error".');
-      
+
       if (newSession.micMutedNotifier && typeof (newSession.micMutedNotifier as any).addListener === 'function') {
-        console.log('[Ultravox] Adding micMutedNotifier event listener.'); // Log for adding
+        console.log('[Ultravox] Adding micMutedNotifier event listener.');
         (newSession.micMutedNotifier as any).addListener(handleMicMuteChange);
-        console.log('[Ultravox] Added event listener for "micMutedNotifier".'); // Confirmation log
+        console.log('[Ultravox] Added event listener for "micMutedNotifier".');
       }
 
-      if (newSession.socket) {
-        const ws = newSession.socket;
-        console.log('[WebSocket RAW] Attempting to add raw event listeners to socket:', ws);
-        ws.onopen = (event) => console.log('[WebSocket RAW] Open:', event);
-        ws.onmessage = (event) => console.log('[WebSocket RAW] Message:', event.data); // Be careful logging message data if sensitive
-        ws.onerror = (event) => console.error('[WebSocket RAW] Error:', event);
-        ws.onclose = (event) => console.log('[WebSocket RAW] Close:', event.code, event.reason, event.wasClean);
-        console.log('[WebSocket RAW] Raw event listeners attached.');
-      } else {
-        console.log('[WebSocket RAW] Cannot attach listeners: newSession.socket is not available before joinCall.');
-      }
+      // Note: WebSocket raw listeners are attached after joinCall, as socket is not available before.
+      // This part of the logic remains, as it's conditional on newSession.socket.
 
-      console.log('[Ultravox] Joining call...');
-      console.log('[Debug] Calling Ultravox SDK joinCall with joinUrl:', joinUrl);
-      await newSession.joinCall(joinUrl);
-      console.log('[Ultravox] Successfully joined call');
-      console.log('[Ultravox] joinCall resolved. Session details:', { id: newSession.id, status: newSession.status, micMuted: newSession.micMuted, socketReadyState: newSession.socket?.readyState });
-      
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-      console.log('[Ultravox] 2-second delay complete. Current session status:', newSession.status, 'Socket readyState:', newSession.socket?.readyState);
-      
-      setSession(newSession); 
-      setIsConnecting(false);
-      return true;
-    } catch (error: any) {
-      console.error('[Ultravox] joinCall REJECTED or other init error:', error);
-      setIsConnecting(false);
-
-      // Determine the error message for onError callback
-      let errorForCallback: Error;
-      if (error instanceof Error) {
-        errorForCallback = error;
-      } else if (error && typeof error.message === 'string') {
-        errorForCallback = new Error(error.message);
-      } else {
-        errorForCallback = new Error('Ultravox initialization failed');
-      }
-      onError(errorForCallback);
-
-      // Existing errorHandler and toast logic
-      const appError = errorHandler.handle(error, { source: 'ultravox_init' });
-      toast({
-        title: 'Connection Error',
-        description: appError.userMessage || 'Could not connect to the interview service.',
-        variant: 'destructive',
-      });
-      
-      const sessionToClean = sessionRef.current; // Use the instance from the ref for cleanup
-      if (sessionToClean && typeof sessionToClean.removeEventListener === 'function') {
-        console.log('[Ultravox] Cleaning up listeners due to join call error on session instance from ref:', sessionToClean.id);
-        sessionToClean.removeEventListener('transcripts', handleTranscript); // handleTranscript is in scope
-        sessionToClean.removeEventListener('status', localHandleStatusUpdate); // localHandleStatusUpdate is in scope
-        console.log('[Ultravox] Removing event listener for "error".');
-        sessionToClean.removeEventListener('error', handleError); // handleError is in scope
-        if (sessionToClean.micMutedNotifier && typeof (sessionToClean.micMutedNotifier as any).removeListener === 'function') {
-            console.log('[Ultravox] Removing micMutedNotifier listener due to join call error.');
-            (sessionToClean.micMutedNotifier as any).removeListener(handleMicMuteChange); // handleMicMuteChange is in scope
+      try {
+        console.log('[Ultravox] Joining call...');
+        console.log('[Debug] Calling Ultravox SDK joinCall with joinUrl:', joinUrl);
+        await newSession.joinCall(joinUrl);
+        console.log('[Ultravox] joinCall promise resolved. Session details immediately after resolution:', { 
+            id: newSession.id, 
+            status: newSession.status, 
+            micMuted: newSession.micMuted, 
+            socketReadyState: newSession.socket?.readyState 
+        });
+        // DO NOT call setSession(newSession) here. It's handled by localHandleStatusUpdate.
+        // The 2-second diagnostic delay has been removed.
+        
+        // Attach raw WebSocket listeners if socket is available, after joinCall has resolved
+        if (newSession.socket) {
+            console.log('[WebSocket RAW] Socket object found after joinCall resolved. Attaching raw event listeners.', newSession.socket);
+            const ws = newSession.socket;
+            ws.onopen = (event) => console.log('[WebSocket RAW] Open:', event);
+            ws.onmessage = (event) => console.log('[WebSocket RAW] Message:', event.data);
+            ws.onerror = (event) => console.error('[WebSocket RAW] Error:', event);
+            ws.onclose = (event) => console.log('[WebSocket RAW] Close - Code:', event.code, 'Reason:', event.reason, 'WasClean:', event.wasClean);
+            // No need for a separate "Raw event listeners attached." log, the onopen/onclose will show activity.
+        } else {
+            console.warn('[WebSocket RAW] newSession.socket is not available immediately after joinCall resolved. Cannot attach raw listeners.');
         }
+
+        setIsConnecting(false); // Still set isConnecting to false, but session state is handled by status updates
+        return true; // Indicate joinCall was invoked successfully. Session establishment is async.
+      } catch (error: any) {
+        console.error('[Ultravox] Error during newSession.joinCall() invocation:', error);
+        setIsConnecting(false);
+
+        let errorForCallback: Error;
+        if (error instanceof Error) {
+          errorForCallback = error;
+        } else if (error && typeof error.message === 'string') {
+          errorForCallback = new Error(error.message);
+        } else {
+          errorForCallback = new Error('Ultravox joinCall failed to invoke');
+        }
+        onError(errorForCallback); // Report specific joinCall invocation error
+
+        const appError = errorHandler.handle(error, { source: 'ultravox_join_call_invocation' });
+        toast({
+          title: 'Connection Error',
+          description: appError.userMessage || 'Could not initiate the connection to the interview service.',
+          variant: 'destructive',
+        });
+        
+        // Clean up listeners attached to newSession if joinCall itself fails
+        // Note: sessionRef.current should be newSession here.
+        const sessionToClean = sessionRef.current; 
+        if (sessionToClean && typeof sessionToClean.removeEventListener === 'function') {
+            console.log('[Ultravox] Cleaning up listeners due to joinCall invocation error on session instance:', sessionToClean.id);
+            sessionToClean.removeEventListener('transcripts', handleTranscript);
+            sessionToClean.removeEventListener('status', localHandleStatusUpdate);
+            sessionToClean.removeEventListener('error', handleError);
+            if (sessionToClean.micMutedNotifier && typeof (sessionToClean.micMutedNotifier as any).removeListener === 'function') {
+                (sessionToClean.micMutedNotifier as any).removeListener(handleMicMuteChange);
+            }
+        }
+        
+        if (sessionRef.current) { 
+            sessionRef.current = null;
+        }
+        // setSession(null); // Not strictly needed here as it wasn't set to newSession yet
+        return false; // Indicate joinCall invocation failed
       }
-      
-      if (sessionRef.current) { 
-        sessionRef.current = null;
-      }
-      setSession(null); 
-      return false;
-    }
-  }, [
-      onTranscriptUpdate, 
-      onStatusChange, 
-      onSessionEnd, 
-      onError, 
-      toast, 
-      errorHandler, 
-      // config variable is not directly used in useCallback, UltravoxSession might use env vars via process.env
-      setCallStatus, 
-      setCallEndReason
-    ]);
+    }, [
+        onTranscriptUpdate, 
+        onStatusChange, 
+        onSessionEnd, 
+        onError, 
+        toast, 
+        errorHandler,
+        // localHandle... functions are defined within initializeSession's scope,
+        // but if they were external and stable, they could be dependencies.
+        // For now, they are closures and will be recreated with each initializeSession call,
+        // which is acceptable if initializeSession is not called excessively.
+        setCallStatus, // Retained as it's used in localHandleStatusUpdate which is part of this closure
+        setCallEndReason // Retained for the same reason
+      ]);
 
   /**
    * End the current session
