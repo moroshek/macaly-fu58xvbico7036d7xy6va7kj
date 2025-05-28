@@ -148,7 +148,6 @@ export function useUltravoxSession({
         }
 
         const eventTargetEndReason = event.target?.endReason;
-        const eventTargetEndReason = event.target?.endReason;
 
         console.log(`[Ultravox] Status Event. Current: ${currentStatus}, Previous: ${prevStatusRef.current}, SDK Reason: ${eventTargetEndReason || 'N/A'}. Raw event:`, event);
         
