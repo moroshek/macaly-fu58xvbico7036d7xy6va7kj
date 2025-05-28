@@ -297,19 +297,19 @@ export function useUltravoxSession({
         // setSession(null); // Not strictly needed here as it wasn't set to newSession yet
         return false; // Indicate joinCall invocation failed
       }
-    }, [
-        onTranscriptUpdate, 
-        onStatusChange, 
-        onSessionEnd, 
-        onError, 
-        toast, 
+}, [
+        onTranscriptUpdate,
+        onStatusChange,
+        onSessionEnd,
+        onError,
+        toast,
         errorHandler,
-        // localHandle... functions are defined within initializeSession's scope,
-        // but if they were external and stable, they could be dependencies.
-        // For now, they are closures and will be recreated with each initializeSession call,
-        // which is acceptable if initializeSession is not called excessively.
-        setCallStatus, // Retained as it's used in localHandleStatusUpdate which is part of this closure
-        setCallEndReason // Retained for the same reason
+        setIsConnecting,
+        setCallStatus,
+        setCallEndReason,
+        setSession,
+        sessionRef,
+        prevStatusRef
       ]);
 
   /**
