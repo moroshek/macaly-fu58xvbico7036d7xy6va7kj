@@ -56,7 +56,6 @@ export function useUltravoxSession({
       }
 
       console.log('[Ultravox] Creating new session');
-
       const sessionOptions = { experimentalMessages: new Set() };
       console.log('[Debug] Initializing UltravoxSession with options (experimentalMessages set to new Set()):', { experimentalMessages: 'new Set()' });
       const newSession = new UltravoxSession(sessionOptions);
@@ -66,7 +65,7 @@ export function useUltravoxSession({
       const handleMicMuteChange = (muted: boolean) => {
         console.log(`[Ultravox] micMutedNotifier event: Microphone is now ${muted ? 'MUTED' : 'UNMUTED'}`);
       };
-      
+
       const handleTranscript = () => {
         const currentSession = sessionRef.current;
         if (!currentSession) {
@@ -93,7 +92,7 @@ export function useUltravoxSession({
           console.error('[Ultravox] Error processing transcript:', err);
         }
       };
-
+     
       const handleError = (event: any) => {
         const errorObj = event?.error || event;
         console.error('[Ultravox] Error:', errorObj);
@@ -118,10 +117,13 @@ export function useUltravoxSession({
             console.warn('[Ultravox] Status update but no current session in ref.');
             return;
         }
-        
-        const currentStatus = event.detail?.status;
-        // const previousStatus = event.detail?.previousStatus; // Not used in provided logic yet, but parsed
 
+        // Changed parsing from event.detail to event.target
+        const currentStatus = event.target?.status;
+        const previousStatus = event.target?.previousStatus; // Parsed, though not used in current logic flow
+        const eventTargetEndReason = event.target?.endReason;
+
+        console.log(`[Ultravox] Parsed Status from event.target: ${currentStatus}, Prev: ${previousStatus || 'N/A'}, Reason from event.target: ${eventTargetEndReason || 'N/A'}`);
         setCallStatus(currentStatus || null);
         onStatusChange(currentStatus || 'unknown'); // Call prop callback
 
@@ -142,7 +144,8 @@ export function useUltravoxSession({
         } else if (currentStatus === 'listening') {
           console.log('[Ultravox] Session is listening (mic should be active).');
         } else if (currentStatus === 'disconnected') {
-          const finalReason = currentSessionInstance.endReason || event.detail?.reason || 'unknown';
+          // Prioritize session instance's endReason, then event.target's endReason
+          const finalReason = currentSessionInstance.endReason || eventTargetEndReason || 'unknown';
           console.log(`[Ultravox] Session disconnected. Reason: ${finalReason}`);
           setCallEndReason(finalReason);
           onSessionEnd(); // Call prop callback
@@ -165,12 +168,18 @@ export function useUltravoxSession({
       
       // Add event listeners using the handlers defined above
       newSession.addEventListener('transcripts', handleTranscript);
+      console.log('[Ultravox] Added event listener for "transcripts".');
+
       newSession.addEventListener('status', localHandleStatusUpdate); 
+      console.log('[Ultravox] Added event listener for "status".');
+      
       newSession.addEventListener('error', handleError);
+      console.log('[Ultravox] Added event listener for "error".');
       
       if (newSession.micMutedNotifier && typeof (newSession.micMutedNotifier as any).addListener === 'function') {
-        console.log('[Ultravox] Adding micMutedNotifier event listener.');
+        console.log('[Ultravox] Adding micMutedNotifier event listener.'); // Log for adding
         (newSession.micMutedNotifier as any).addListener(handleMicMuteChange);
+        console.log('[Ultravox] Added event listener for "micMutedNotifier".'); // Confirmation log
       }
 
       console.log('[Ultravox] Joining call...');
@@ -228,6 +237,8 @@ export function useUltravoxSession({
    * End the current session
    */
   const endSession = useCallback(async () => {
+    console.log('[Ultravox] endSession CALLED. Call stack:'); // Added
+    console.trace(); // Added
     const currentSession = sessionRef.current; // Capture current session from ref
     if (currentSession && typeof currentSession.leaveCall === 'function') {
       try {
