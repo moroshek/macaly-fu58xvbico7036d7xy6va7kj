@@ -57,6 +57,7 @@ function LayoutMountTracker({ children }: { children: React.ReactNode }) {
 }
 
 export default function StableClientWrapper({ children }: { children: React.ReactNode }) {
+  // Ensure any temporary test useEffect here is removed.
   return (
     <LayoutMountTracker>
       <StableWrapper>
