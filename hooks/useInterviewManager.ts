@@ -35,13 +35,12 @@ export interface UseInterviewManagerProps {
   errorHandler: ErrorHandler;
   transcriptService: TranscriptService;
   toast: ReturnType<typeof useToast>['toast'];
-  
-  ultravoxSession: Pick<ReturnType<typeof useUltravoxSession>, 'initializeSession' | 'endSession' | 'getTranscripts'>;
+  // ultravoxSession: Pick<ReturnType<typeof useUltravoxSession>, 'initializeSession' | 'endSession' | 'getTranscripts'>; // Removed
 }
 
 // Return type of the useInterviewManager hook
 export interface InterviewManagerHandlers {
-  handleStartInterview: () => Promise<void>;
+  handleStartInterview: () => Promise<{ joinUrl: string; callId: string } | null>;
   handleSubmitTranscript: () => Promise<void>;
   handleEndInterview: () => Promise<void>;
   resetAllAndStartNew: () => void;
@@ -65,10 +64,10 @@ export const useInterviewManager = (deps: UseInterviewManagerProps): InterviewMa
     errorHandler,
     transcriptService,
     toast,
-    ultravoxSession,
+    // ultravoxSession, // Removed
   } = deps;
 
-  const handleStartInterview = useCallback(async () => {
+  const handleStartInterview = useCallback(async (): Promise<{ joinUrl: string; callId: string } | null> => {
     setSummaryData(null);
     setAnalysisData(null);
     setTranscript([]);
@@ -115,17 +114,12 @@ export const useInterviewManager = (deps: UseInterviewManagerProps): InterviewMa
 
       setCallId(response.callId);
       logger.logClientEvent(`Call ID received: ${response.callId.substring(0, CALL_ID_DISPLAY_LENGTH)}...`);
+      
+      // No longer calls ultravoxSession.initializeSession here
+      setInterviewActive(true); // Signifies intent and that setup is proceeding
+      logger.logClientEvent("Interview initiation process complete, joinUrl obtained.");
 
-      const success = await ultravoxSession.initializeSession(response.joinUrl);
-      if (!success) {
-        throw new Error("Failed to initialize interview session");
-      }
-
-      setInterviewActive(true);
-      logger.logClientEvent("Interview started successfully");
-      // UI_STATES.INTERVIEWING is typically set by Ultravox status events.
-      // setInterviewActive(true) and related logging are now handled by a useEffect hook
-      // monitoring appState.uvStatus (which reflects callStatus).
+      return { joinUrl: response.joinUrl, callId: response.callId };
 
     } catch (error) {
       const appError = errorHandler.handle(error, { source: 'startInterview' });
@@ -137,17 +131,14 @@ export const useInterviewManager = (deps: UseInterviewManagerProps): InterviewMa
         variant: "destructive"
       });
       setUiState(UI_STATES.ERROR); // Ensure UI state reflects error
+      return null;
     }
   }, [
-    appState.isOnline,
+    appState.isOnline, // Ensure appState.isOnline is listed if used directly
     setSummaryData, setAnalysisData, setTranscript, clearError, setError, setUiState,
     setAudioPermission, setCallId, setInterviewActive, toast, logger, backendService,
-    errorHandler, ultravoxSession.initializeSession
-    // Removed direct dependencies on appState values that are part of appState object itself
-    // The appState object itself is a dependency if any of its properties are used.
-    // For more granular control, list specific appState properties: appState.isOnline, etc.
-    // However, if many are used, appState as a whole is fine.
-    // appState.uvStatus is intentionally not listed here as it's handled in a separate useEffect.
+    errorHandler
+    // Removed ultravoxSession.initializeSession
   ]);
 
   const handleSubmitTranscript = useCallback(async () => {
@@ -230,34 +221,16 @@ export const useInterviewManager = (deps: UseInterviewManagerProps): InterviewMa
     }
 
     logger.logClientEvent("Ending interview");
-    setInterviewActive(false); // This will trigger onSessionEnd in useUltravoxSession if session is active
+    setInterviewActive(false); // Signal intent to end
 
-    await ultravoxSession.endSession();
+    // No longer calls ultravoxSession.endSession() or ultravoxSession.getTranscripts()
+    // Relies on appState.currentTranscript which should be up-to-date
 
-    const sessionTranscripts = ultravoxSession.getTranscripts();
-    // Use a combined transcript for submission if appState.currentTranscript might be partial
-    const finalTranscript = appState.currentTranscript.length > sessionTranscripts.length ? appState.currentTranscript : sessionTranscripts;
-    
-    if (finalTranscript.length === 0 && appState.currentTranscript.length > 0) {
-        // This case handles if getTranscripts somehow returned empty but we had some from onTranscriptUpdate
-        setTranscript(appState.currentTranscript); 
-    } else if (finalTranscript.length > 0 && appState.currentTranscript.length === 0) {
-         logger.logClientEvent("Using session transcripts as fallback for submission");
-         setTranscript(finalTranscript); // Ensure appState.currentTranscript is updated before handleSubmit
-    }
+    // A small delay to allow state to propagate if setTranscript was called (though setTranscript is not called here anymore directly)
+    // This delay might not be strictly necessary anymore but keeping it for now if handleSubmitTranscript relies on very recent state.
+    await new Promise(resolve => setTimeout(resolve, 0)); 
 
-
-    // Check currentTranscript from appState again, as it might have been updated by setTranscript above
-    // Or, more directly, use `finalTranscript` if it's guaranteed to be the one to use.
-    // For safety, using appState.currentTranscript which *should* be updated by now if setTranscript was called.
-    // A better pattern might be to pass the transcript directly to handleSubmitTranscript.
-    // For now, relying on state update.
-
-    // A small delay to allow state to propagate if setTranscript was called.
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-
-    if (appState.currentTranscript.length > 0) { // Check appState.currentTranscript after potential update
+    if (appState.currentTranscript.length > 0) {
       await handleSubmitTranscript();
     } else {
       logger.logError('EndInterview', new Error("No transcript data found to submit."));
@@ -269,10 +242,9 @@ export const useInterviewManager = (deps: UseInterviewManagerProps): InterviewMa
       setUiState(UI_STATES.IDLE);
     }
   }, [
-    appState.uiState, appState.currentTranscript, // Include appState.currentTranscript
-    setInterviewActive, setTranscript, setError, setUiState, toast, logger,
-    ultravoxSession.endSession, ultravoxSession.getTranscripts, handleSubmitTranscript
-    // Added appState.currentTranscript to dependency array
+    appState.uiState, appState.currentTranscript, // appState.currentTranscript is crucial here
+    setInterviewActive, setError, setUiState, toast, logger,
+    handleSubmitTranscript // Removed setTranscript, ultravoxSession.endSession, ultravoxSession.getTranscripts
   ]);
   
   // This function needs to be defined within the hook to access `appStateResetAll`, `logger.clearLogs`, and `handleStartInterview`
