@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // 🚨 CRITICAL: Disable React StrictMode to prevent double mounting
+  reactStrictMode: false, // This was causing double mounting in development!
+
   eslint: {
     ignoreDuringBuilds: true,
   },
