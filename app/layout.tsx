@@ -15,11 +15,8 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Direct console.log removed from here
-
-  useEffect(() => {
-    console.log("--- app/layout.tsx RootLayout useEffect running on CLIENT ---"); // Test log inside useEffect
-  }, []); // Empty dependency array ensures it runs once on mount
+  // REMOVED: Direct console.log and useEffect from server component
+  // Server components cannot use client-side hooks like useEffect
 
   return (
     <html lang="en">
