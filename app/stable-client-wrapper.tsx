@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect } from "react"; // useEffect is already here
 
 // Stability wrapper to prevent child component remounting
 function StableWrapper({ children }: { children: React.ReactNode }) {
