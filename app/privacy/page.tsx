@@ -1,5 +1,5 @@
 "use client";
-import { useEffect } from 'react'; // Added to address build error
+// import { useEffect } from 'react'; // Removed as useEffect is not used
 import Link from "next/link";
 
 export default function PrivacyPage() {
