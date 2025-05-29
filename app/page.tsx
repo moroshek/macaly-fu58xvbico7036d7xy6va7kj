@@ -14,7 +14,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAppState } from "@/hooks/useAppState";
 import { useAppLogger } from "@/hooks/useAppLogger";
-import { useUltravoxSession } from "@/hooks/useUltravoxSession";
+// import { useUltravoxSession } from '@/hooks/useUltravoxSession'; // Removed
 import { useInterviewManager } from "@/hooks/useInterviewManager";
 import { BackendService } from "@/lib/backend-service";
 import { ErrorHandler } from "@/lib/error-handler";
@@ -28,6 +28,18 @@ import VoiceActivityIndicator from "@/components/VoiceActivityIndicator";
 
 import IntakeControlUI from "@/components/page/medical-intake/IntakeControlUI";
 import ResultsDisplay from "@/components/page/medical-intake/ResultsDisplay";
+
+import dynamic from 'next/dynamic';
+import type { UltravoxManagerProps } from '@/components/UltravoxSessionManager';
+// Ensure Utterance type is available if not already e.g. from import { Utterance } from "@/lib/types";
+
+const UltravoxSessionLoader = dynamic<UltravoxManagerProps>(
+  () => import('@/components/UltravoxSessionManager'),
+  {
+    ssr: false,
+    loading: () => <p style={{ textAlign: 'center', padding: '20px' }}>Loading Audio Session Manager...</p>,
+  }
+);
 
 // RemountDebugger Component Definition
 // 'use client'; // This is already at the top of the file
@@ -284,41 +296,11 @@ export default function Page() {
   const { toast } = useToast();
 
   const [processTranscriptAfterSession, setProcessTranscriptAfterSession] = useState(false);
+  const [activeJoinUrl, setActiveJoinUrl] = useState<string | null>(null);
 
-  const ultravoxSessionHook = useUltravoxSession({
-    onTranscriptUpdate: appStateSetters.setTranscript,
-    onStatusChange: (status) => {
-      console.log('[Page onStatusChange prop] CALLED by useUltravoxSession. New status:', status);
-      appStateSetters.setUvStatus(status);
-    },
-    onSessionEnd: useCallback(() => {
-      console.log('[Page onSessionEnd prop] CALLED by useUltravoxSession.');
-      logger.logClientEvent("Session ended via onSessionEnd callback (e.g. external disconnect)");
-      const currentTranscriptSnapshot = useAppState.getState ? useAppState.getState().currentTranscript : state.currentTranscript;
-      if (currentTranscriptSnapshot.length > 0) {
-        console.log('[Page onSessionEnd prop] Transcript found, setting processTranscriptAfterSession to true.');
-        setProcessTranscriptAfterSession(true);
-      } else {
-        console.log('[Page onSessionEnd prop] No transcript data found.');
-        logger.logError('onSessionEnd', new Error("No transcript data found after session ended."));
-        appStateSetters.setError("No conversation data was recorded.");
-        toast({ title: "Session Ended", description: "No conversation data." });
-        appStateSetters.setUiState('idle');
-      }
-    }, [logger, appStateSetters, toast]),
-    onError: useCallback((error: Error) => {
-      console.error('[Page onError prop] CALLED by useUltravoxSession:', error);
-      logger.logError('UltravoxSession', error.message, error);
-      appStateSetters.setError(error.message);
-    }, [logger, appStateSetters]),
-  });
+  // const ultravoxSessionHook = useUltravoxSession({ ... }); // Removed
 
-  const {
-    handleStartInterview,
-    handleSubmitTranscript,
-    handleEndInterview,
-    resetAllAndStartNew
-  } = useInterviewManager({
+  const interviewManager = useInterviewManager({ // Renamed to avoid conflict with destructured handleStartInterview
     appState: state,
     setUiState: appStateSetters.setUiState,
     setCallId: appStateSetters.setCallId,
@@ -335,16 +317,16 @@ export default function Page() {
     errorHandler,
     transcriptService,
     toast,
-    ultravoxSession: ultravoxSessionHook,
+    ultravoxSession: null as any, // TEMPORARY CHANGE
   });
 
   // --- START: LOGGING FOR useEffect - ProcessTranscript ---
   useEffect(() => {
-    const depsValues = { processTranscriptAfterSession, handleSubmitTranscript_exists: !!handleSubmitTranscript, logger_exists: !!logger };
+    const depsValues = { processTranscriptAfterSession, handleSubmitTranscript_exists: !!interviewManager.handleSubmitTranscript, logger_exists: !!logger };
     console.log('[Page useEffect - ProcessTranscript] FIRED/DEPS CHANGED. Dependencies (values/existence):', depsValues);
     if (processTranscriptAfterSession) {
       logger.logClientEvent("Processing transcript due to processTranscriptAfterSession flag");
-      handleSubmitTranscript();
+      interviewManager.handleSubmitTranscript();
       setProcessTranscriptAfterSession(false);
     }
     return () => {
@@ -352,7 +334,7 @@ export default function Page() {
       console.log('[Page useEffect - ProcessTranscript] CLEANUP. Current App State (approx):', cleanupState ? { uiState: cleanupState.uiState, processTranscriptAfterSession } : "N/A");
       console.trace();
     };
-  }, [processTranscriptAfterSession, handleSubmitTranscript, logger]);
+  }, [processTranscriptAfterSession, interviewManager.handleSubmitTranscript, logger]);
   // --- END: LOGGING FOR useEffect - ProcessTranscript ---
 
   // --- START: LOGGING FOR useEffect - NetworkSetup ---
@@ -393,10 +375,10 @@ export default function Page() {
       callId: currentState.callId,
       isOnline: currentState.isOnline,
       errorMessage: currentState.errorMessage,
-      ultravoxSessionObject: ultravoxSessionHook.session
+      ultravoxSessionObject: null // TEMPORARY CHANGE
     });
     logger.logClientEvent("Manual debug triggered");
-  }, [logger, ultravoxSessionHook.session, state]);
+  }, [logger, state]); // Removed ultravoxSessionHook.session from dependencies
 
   const formatSummaryField = (value: string | null | undefined) => {
     return value?.trim() || "Not reported";
@@ -454,12 +436,49 @@ export default function Page() {
     console.log('[Page Error Overlay] Retry clicked.');
     appStateSetters.clearError();
     appStateSetters.setUiState('idle');
+    setActiveJoinUrl(null); // Ensure manager is removed on retry from error
   }, [appStateSetters]);
 
   const handleErrorReset = useCallback(() => {
     console.log('[Page Error Overlay] Start Over clicked.');
-    resetAllAndStartNew();
-  }, [resetAllAndStartNew]);
+    interviewManager.resetAllAndStartNew(); // Use the one from interviewManager
+    setActiveJoinUrl(null); // Ensure manager is removed
+  }, [interviewManager, appStateSetters]); // Added appStateSetters if resetAllAndStartNew doesn't cover UI
+
+  // Page-level handlers that interact with UltravoxSessionManager lifecycle
+  const pageLevelHandleStartInterview = async () => {
+    appStateSetters.clearError();
+    appStateSetters.setUiState('requesting_permissions'); // Or 'initiating' based on actual flow
+    // Assuming interviewManager.handleStartInterview is updated to return { joinUrl, callId } or similar
+    const joinInfo = await interviewManager.handleStartInterview(); 
+    if (joinInfo && joinInfo.joinUrl) {
+      console.log('[Page] joinUrl received, setting activeJoinUrl:', joinInfo.joinUrl);
+      // callId should be set in appState by handleStartInterview from useInterviewManager
+      setActiveJoinUrl(joinInfo.joinUrl);
+      // uiState will be further managed by UltravoxSessionManager's onStatusChange -> appStateSetters.setUvStatus -> which influences uiState via useAppState logic
+    } else {
+      console.error('[Page] Failed to get joinUrl from handleStartInterview.');
+      // Error should ideally be set by useInterviewManager.handleStartInterview if it fails
+      if (!state.errorMessage) { // Check if error is already set
+         appStateSetters.setError('Failed to initiate interview session. No join URL was provided.');
+      }
+      appStateSetters.setUiState('error'); // Ensure UI reflects error state
+    }
+  };
+
+  const pageLevelHandleEndInterview = async () => {
+    console.log('[Page] pageLevelHandleEndInterview called.');
+    // useInterviewManager's handleEndInterview might still do transcript submission
+    await interviewManager.handleEndInterview(); 
+    setActiveJoinUrl(null); // This will unmount UltravoxSessionManager, triggering its endSession
+    // UI state should be managed by onSessionEnd from manager or transcript processing logic
+  };
+
+  const pageLevelResetAllAndStartNew = () => {
+    console.log('[Page] pageLevelResetAllAndStartNew called.');
+    interviewManager.resetAllAndStartNew(); 
+    setActiveJoinUrl(null); // Ensure manager is gone
+  };
 
   return (
     <RemountDebugger
@@ -512,7 +531,7 @@ export default function Page() {
           sessionStatus={state.uvStatus}
           sessionId={state.callId}
           isSessionActive={state.isInterviewActive}
-          micStatus={ultravoxSessionHook.session ? (ultravoxSessionHook.isMicMuted() ? 'muted' : 'active') : 'inactive'}
+          micStatus={'unknown'} // TEMPORARY CHANGE
           utteranceCount={state.currentTranscript.length}
           lastUtteranceSource={state.currentTranscript.length > 0 ? state.currentTranscript[state.currentTranscript.length - 1].speaker : null}
           submittedDataLength={state.currentTranscript.length > 0 ? state.currentTranscript.map(u => u.text).join('').length : null}
@@ -523,6 +542,39 @@ export default function Page() {
           outputSet2ApproxLength={state.analysisData ? state.analysisData.length : null}
           clientEventsLog={logger.getClientEvents().map(e => `${new Date(e.timestamp).toLocaleTimeString()}: ${e.message}`)}
         />
+
+        {activeJoinUrl && (
+          <UltravoxSessionLoader
+            key={activeJoinUrl} 
+            joinUrl={activeJoinUrl}
+            callId={state.callId || undefined} // Pass callId from app state
+            onTranscriptUpdate={appStateSetters.setTranscript}
+            onStatusChange={(status) => {
+              console.log('[Page] UltravoxSessionManager onStatusChange:', status);
+              appStateSetters.setUvStatus(status);
+            }}
+            onSessionEnd={() => {
+              console.log('[Page] UltravoxSessionManager onSessionEnd.');
+              logger.logClientEvent("Session ended via UltravoxSessionManager");
+              const currentTranscriptSnapshot = useAppState.getState ? useAppState.getState().currentTranscript : state.currentTranscript;
+              if (currentTranscriptSnapshot.length > 0) {
+                setProcessTranscriptAfterSession(true); 
+              } else {
+                logger.logError('onSessionEnd (from Manager)', new Error("No transcript data after session ended."));
+                appStateSetters.setError("No conversation data was recorded.");
+                toast({ title: "Session Ended", description: "No conversation data." });
+                appStateSetters.setUiState('idle');
+              }
+              setActiveJoinUrl(null); 
+            }}
+            onError={(error: Error) => {
+              console.error('[Page] UltravoxSessionManager onError:', error);
+              logger.logError('UltravoxSessionManager', error.message, error);
+              appStateSetters.setError(error.message); 
+              setActiveJoinUrl(null); 
+            }}
+          />
+        )}
 
         <main className="flex-1">
           <section className="container mx-auto py-12 md:py-24 px-4 md:px-6">
@@ -577,10 +629,10 @@ export default function Page() {
                   errorMessage={state.errorMessage}
                   currentTranscriptLength={state.currentTranscript.length}
                   getStatusText={getStatusText}
-                  handleStartInterview={handleStartInterview}
-                  handleEndInterview={handleEndInterview}
-                  resetAllAndStartNew={resetAllAndStartNew}
-                  resetAll={appStateSetters.resetAll}
+                  handleStartInterview={pageLevelHandleStartInterview}
+                  handleEndInterview={pageLevelHandleEndInterview}
+                  resetAllAndStartNew={pageLevelResetAllAndStartNew}
+                  resetAll={appStateSetters.resetAll} // This can remain if it only resets state
                   checkMicrophonePermissions={checkMicrophonePermissions}
                   setAudioPermission={appStateSetters.setAudioPermission}
                   setError={appStateSetters.setError}
