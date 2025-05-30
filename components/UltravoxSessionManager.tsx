@@ -44,6 +44,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
   const setActiveConnectionCallId = useAppState(state => state.setActiveConnectionCallId);
   const setConnectionAttemptInProgress = useAppState(state => state.setConnectionAttemptInProgress);
   const setLastConnectionAttempt = useAppState(state => state.setLastConnectionAttempt);
+  const clearConnectionState = useAppState(state => state.clearConnectionState);
   const activeConnectionCallId = useAppState(state => state.activeConnectionCallId);
   const connectionAttemptInProgress = useAppState(state => state.connectionAttemptInProgress);
 
@@ -139,12 +140,15 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
         
         hasEncounteredErrorRef.current = true; // Set error flag
         logger.log(`[UltravoxSessionManager] Set hasEncounteredErrorRef to true for callId: ${effectCallIdLog}`);
+        
+        // Clear connection state to allow retries
+        clearConnectionState();
+        
         onError(error instanceof Error ? error : new Error(errorMessage), 'ConnectionSetup');
         // DO NOT reset hasAttemptedConnectionRef here. It signifies an attempt was made for this callId/joinUrl.
         // The hasEncounteredErrorRef will prevent immediate retries for this context.
       } finally {
         performingSessionManagementRef.current = false;
-        setConnectionAttemptInProgress(false);
         logger.log(`[UltravoxSessionManager] Connection sequence finished for callId: ${effectCallIdLog}. performingSessionManagementRef set to false.`);
       }
     };
@@ -163,6 +167,8 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
             connectionAttemptInProgress,
             callId
           });
+          // Don't return immediately - let the user retry manually
+          hasAttemptedConnectionRef.current = true; // Mark as attempted to prevent infinite loops
           return;
         }
         
@@ -198,8 +204,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
         hasEncounteredErrorRef.current = false; // Reset error flag when explicitly disconnected
         
         // Clear connection state management
-        setActiveConnectionCallId(null);
-        setConnectionAttemptInProgress(false);
+        clearConnectionState();
         
         logger.log(`[UltravoxSessionManager] Reset hasAttemptedConnectionRef and hasEncounteredErrorRef for callId ${effectCallIdLog} due to shouldConnect being false.`);
       } else {
@@ -211,7 +216,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
            logger.warn('[UltravoxSessionManager] Reset performingSessionManagementRef as shouldConnect is false and it was still true.');
       }
     }
-  }, [shouldConnect, joinUrl, callId, ultravoxSession, callbacks, isConnectionAllowed, setActiveConnectionCallId, setConnectionAttemptInProgress, setLastConnectionAttempt]);
+  }, [shouldConnect, joinUrl, callId, ultravoxSession, callbacks, isConnectionAllowed, setActiveConnectionCallId, setConnectionAttemptInProgress, setLastConnectionAttempt, clearConnectionState]);
 
   // Cleanup effect for component unmount
   useEffect(() => {
@@ -232,12 +237,11 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
       prevCallIdRef.current = null;
       
       // Clear connection state management on unmount
-      setActiveConnectionCallId(null);
-      setConnectionAttemptInProgress(false);
+      clearConnectionState();
       
       logger.log(`[UltravoxSessionManager] All refs reset during unmount for callId: ${callIdLog}.`);
     };
-  }, [ultravoxSession, callId, setActiveConnectionCallId, setConnectionAttemptInProgress]); // Include callId to log the correct one on unmount if it was available. ultravoxSession is stable.
+  }, [ultravoxSession, callId, clearConnectionState]); // Include callId to log the correct one on unmount if it was available. ultravoxSession is stable.
 
   return (
     <div style={{ display: 'none' }} data-testid="ultravox-manager">

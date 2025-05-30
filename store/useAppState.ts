@@ -69,8 +69,11 @@ export const useAppState = create<AppState>()((set, get) => ({
       return false;
     }
     
-    // Don't allow if a connection attempt was made in the last 2 seconds
-    if (state.lastConnectionAttempt && (now - state.lastConnectionAttempt) < 2000) {
+    // Don't allow if a connection attempt was made in the last 1 second (reduced from 2)
+    // But only if it's for the same callId that's still active
+    if (state.lastConnectionAttempt && 
+        state.activeConnectionCallId === callId &&
+        (now - state.lastConnectionAttempt) < 1000) {
       return false;
     }
     
@@ -78,6 +81,13 @@ export const useAppState = create<AppState>()((set, get) => ({
   },
   
   resetState: () => set(initialState),
+  
+  // Clear connection state to allow retries after errors
+  clearConnectionState: () => set({ 
+    activeConnectionCallId: null, 
+    connectionAttemptInProgress: false, 
+    lastConnectionAttempt: null 
+  }),
 }));
 
 // Log creation and description
