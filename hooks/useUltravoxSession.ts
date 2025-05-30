@@ -353,15 +353,8 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
           propsRef.current.onStatusChange('disconnected', { code: event.code, reason: event.reason});
           endSession(true); // Mark as cleanup call
         };
-      } else {
-        const err = new Error('SDK socket not available after joinCall');
-        logger.error('[useUltravoxSession] Connect Error:', err.message);
-        propsRef.current.onError(err, 'ConnectNoSocket');
-        propsRef.current.onStatusChange('disconnected', { error: 'sdk_socket_missing_original_check' });
-        // No need to clear timeout here as it's cleared if joinCall succeeded and socket is present,
-        // or if joinCall failed (handled in catch), or if socket is missing (handled above).
-        endSession(true); // Mark as cleanup call
-      }
+      // The following 'else' block was orphaned due to the 'if (!socketRef.current) { ... return; }' check above.
+      // Removing the orphaned 'else' block. The logic for a null socket is already handled.
     } catch (error) {
       logger.error('[useUltravoxSession] Error during joinCall or its immediate aftermath:', error);
       // Ensure timeout is cleared on any error during this try block
