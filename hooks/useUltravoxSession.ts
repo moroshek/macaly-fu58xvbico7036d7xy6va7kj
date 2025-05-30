@@ -38,30 +38,16 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
 
   // Handle status events following SDK documentation patterns
   const handleStatus = useCallback((event: Event) => {
-    logger.log('[useUltravoxSession] SDK Status Event:', event);
+    logger.log('[useUltravoxSession] SDK Status Event received');
     
-    let statusString = 'unknown_status';
-    let eventDetails: any = event;
-
-    // Handle standard Ultravox status events - check event.detail.status first (documented pattern)
-    if (event instanceof CustomEvent && event.detail) {
-      const detail = event.detail;
-      eventDetails = detail;
-      
-      if (detail.status && typeof detail.status === 'string') {
-        statusString = detail.status;
-        logger.log(`[useUltravoxSession] Status from event.detail.status: "${statusString}"`);
-      } else if (typeof detail === 'string') {
-        statusString = detail;
-        logger.log(`[useUltravoxSession] Status from event.detail: "${statusString}"`);
-      } else {
-        logger.warn('[useUltravoxSession] Unexpected event.detail structure:', detail);
-      }
-    } else {
-      logger.warn('[useUltravoxSession] Event is not a CustomEvent or missing detail:', event);
+    // SDK uses notification-based events - access status from session.status, not event object
+    if (!sessionRef.current) {
+      logger.warn('[useUltravoxSession] Status event received but session is null');
+      return;
     }
 
-    logger.log(`[useUltravoxSession] Processing status: "${statusString}"`);
+    const statusString = sessionRef.current.status || 'unknown_status';
+    logger.log(`[useUltravoxSession] Current session status: "${statusString}"`);
 
     // Handle microphone management based on SDK best practices
     if (statusString === 'idle' && sessionRef.current) {
@@ -69,18 +55,27 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
       sessionRef.current.unmuteMic()
         .then(() => {
           logger.log('[useUltravoxSession] Microphone unmuted successfully');
-          propsRef.current.onStatusChange('listening', eventDetails);
+          // Check status again after unmuting in case it changed
+          const newStatus = sessionRef.current?.status || 'listening';
+          propsRef.current.onStatusChange(newStatus, { previousStatus: statusString });
         })
         .catch((error) => {
           logger.error('[useUltravoxSession] Failed to unmute microphone:', error);
-          propsRef.current.onStatusChange(statusString, eventDetails);
+          propsRef.current.onStatusChange(statusString, { error });
         });
     } else {
-      propsRef.current.onStatusChange(statusString, eventDetails);
+      propsRef.current.onStatusChange(statusString, { timestamp: Date.now() });
     }
   }, []); // propsRef is stable
 
-  const handleTranscripts = useCallback((transcripts: Utterance[]) => {
+  const handleTranscripts = useCallback((event: Event) => {
+    // SDK uses notification-based events - access transcripts from session.transcripts, not event object
+    if (!sessionRef.current) {
+      logger.warn('[useUltravoxSession] Transcript event received but session is null');
+      return;
+    }
+
+    const transcripts = sessionRef.current.transcripts || [];
     logger.log('[useUltravoxSession] SDK Transcripts count:', transcripts.length);
     propsRef.current.onTranscriptUpdate(transcripts as Utterance[]);
   }, []); // propsRef is stable
@@ -373,7 +368,10 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
   }, [endSession]);
 
   const getTranscripts = useCallback((): Utterance[] => {
-    return (sessionRef.current?.transcripts as Utterance[]) || [];
+    if (!sessionRef.current) {
+      return [];
+    }
+    return (sessionRef.current.transcripts as Utterance[]) || [];
   }, []);
 
   useEffect(() => {
