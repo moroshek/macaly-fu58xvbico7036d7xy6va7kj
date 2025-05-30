@@ -171,6 +171,13 @@ export default function HomePage() {
     // No need to manually set other states as resetState handles store properties.
     logger.log('[Page] Application state fully reset.');
   }, [resetState]);
+
+  const handleManagerExperimentalMessage = useCallback((message: any) => {
+    logger.log('[Page] Manager Experimental Message:', message);
+    // Potentially, you could also set this to a new state in useAppState
+    // if you wanted to display these messages in the UI for debugging.
+    // For now, just logging is fine as per the request.
+  }, []); // No dependencies needed if it only calls logger
   
   // --- Basic Styling (can be moved to a CSS module) ---
   const pageStyle: React.CSSProperties = { fontFamily: 'system-ui, sans-serif', padding: '20px', maxWidth: '800px', margin: '40px auto', background: '#f4f7f6', borderRadius: '8px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)' };
@@ -228,6 +235,7 @@ export default function HomePage() {
           onTranscriptUpdate={handleManagerTranscriptUpdate}
           onSessionEnd={handleManagerSessionEnd}
           onError={handleManagerError}
+          onExperimentalMessage={handleManagerExperimentalMessage} // Add this line
         />
       )}
 

@@ -9,6 +9,7 @@ interface UseUltravoxSessionProps {
   onTranscriptUpdate: (transcripts: Utterance[]) => void;
   onSessionEnd: (details: { code?: number; reason?: string; error?: Error }) => void;
   onError: (error: Error, context?: string) => void;
+  onExperimentalMessage?: (message: any) => void; // Added new optional prop
 }
 
 const CONNECTION_TIMEOUT_MS = 15000;
@@ -52,6 +53,7 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
       sessionRef.current.off('transcripts');
       sessionRef.current.off('error');
       sessionRef.current.off('close');
+      sessionRef.current.off('experimental_message'); // Remove new listener
       
       try {
         if (typeof sessionRef.current.endCall === 'function') {
@@ -90,8 +92,9 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
     }
 
     try {
-      sessionRef.current = new UltravoxSession({ experimentalMessages: new Set() });
-      logger.log('[useUltravoxSession] UltravoxSession created.');
+      // Changed experimentalMessages option
+      sessionRef.current = new UltravoxSession({ experimentalMessages: ["debug"] });
+      logger.log('[useUltravoxSession] UltravoxSession created with experimentalMessages: ["debug"].');
 
       sessionRef.current.on('status', (status, details) => {
         logger.log('[useUltravoxSession] SDK Status:', status, details);
@@ -118,9 +121,21 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
         }
         endSession(true); // Mark as cleanup call
       });
+
+      // Add new experimental_message event listener
+      if (propsRef.current.onExperimentalMessage) {
+        sessionRef.current.on('experimental_message', (message) => {
+          logger.log('[useUltravoxSession] SDK Experimental Message:', message);
+          propsRef.current.onExperimentalMessage?.(message);
+        });
+      } else {
+        sessionRef.current.on('experimental_message', (message) => {
+          logger.log('[useUltravoxSession] SDK Experimental Message (no prop handler):', message);
+        });
+      }
       
       isSessionActiveRef.current = false; // Initialized, but not "active" (i.e. connected)
-      logger.log('[useUltravoxSession] Session initialized and listeners attached.');
+      logger.log('[useUltravoxSession] Session initialized and listeners attached (including experimental_message).');
     } catch (error) {
       logger.error('[useUltravoxSession] Failed to initialize session:', error);
       propsRef.current.onError(error instanceof Error ? error : new Error(String(error)), 'InitializeError');

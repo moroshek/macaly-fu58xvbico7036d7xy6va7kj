@@ -16,6 +16,7 @@ interface UltravoxSessionManagerProps {
   onTranscriptUpdate: (transcripts: Utterance[]) => void;
   onSessionEnd: (details: { code?: number; reason?: string; error?: Error }) => void;
   onError: (error: Error, context?: string) => void;
+  onExperimentalMessage?: (message: any) => void; // Added new optional prop
 }
 
 export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
