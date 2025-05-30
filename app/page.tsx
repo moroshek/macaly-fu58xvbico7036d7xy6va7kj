@@ -136,9 +136,26 @@ export default function HomePage() {
     setUvClientStatus(status);
 
     switch (status) {
+      case 'idle':
+        // Session connected and media ready, but microphone still muted
+        setUiState('connecting');
+        setAppErrorMessage(null);
+        break;
       case 'listening':
+        // Microphone unmuted and ready for conversation
         setUiState('interviewing');
         setAppErrorMessage(null);
+        break;
+      case 'thinking':
+      case 'speaking':
+        // Keep in interviewing state during conversation
+        if (uiState !== 'interviewing') {
+          setUiState('interviewing');
+        }
+        break;
+      case 'disconnected':
+        // Natural session end
+        setShouldConnectUltravox(false);
         break;
       case 'failed':
       case 'error':
@@ -147,7 +164,7 @@ export default function HomePage() {
         setShouldConnectUltravox(false);
         break;
     }
-  }, [setUvClientStatus, setUiState, setAppErrorMessage]);
+  }, [setUvClientStatus, setUiState, setAppErrorMessage, uiState]);
 
   const handleManagerTranscriptUpdate = useCallback((transcripts: Utterance[]) => {
     setCurrentTranscript(transcripts);

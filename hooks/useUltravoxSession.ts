@@ -36,56 +36,47 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
 
   const endSessionRef = useRef<((isCleanupCall?: boolean) => Promise<void>) | null>(null);
 
-  // Modified handleStatus to inspect the event object
+  // Handle status events following SDK documentation patterns
   const handleStatus = useCallback((event: Event) => {
-    logger.log('[useUltravoxSession] Raw SDK Status Event:', event);
-    let statusString = 'unknown_sdk_status_payload'; // Specific default as per refinement
-    let eventForCallbackDetails: any = event; // Default to passing the full event for details
+    logger.log('[useUltravoxSession] SDK Status Event:', event);
+    
+    let statusString = 'unknown_status';
+    let eventDetails: any = event;
 
+    // Handle standard Ultravox status events - check event.detail.status first (documented pattern)
     if (event instanceof CustomEvent && event.detail) {
-        const detail = event.detail;
-        eventForCallbackDetails = detail; // Pass detail as the second arg for onStatusChange
-
-        if (typeof detail === 'string') {
-            statusString = detail;
-            logger.log(`[useUltravoxSession] Status extracted from CustomEvent.detail (string): "${statusString}"`);
-        } else if (typeof detail === 'object' && detail !== null) {
-            if ('status' in detail && typeof detail.status === 'string') {
-                statusString = detail.status;
-                logger.log(`[useUltravoxSession] Status extracted from CustomEvent.detail.status: "${statusString}"`);
-            } else if ('newStatus' in detail && typeof detail.newStatus === 'string') { // Added check for newStatus
-                statusString = detail.newStatus;
-                logger.log(`[useUltravoxSession] Status extracted from CustomEvent.detail.newStatus: "${statusString}"`);
-            } else {
-                // If detail is an object but doesn't match known structures, log and use default statusString
-                logger.warn('[useUltravoxSession] Status event.detail is an object but has no recognized status string property (checked: status, newStatus). Detail:', detail);
-                // statusString remains 'unknown_sdk_status_payload'
-            }
-        } else {
-            // If detail is not a string or a suitable object, log and use default statusString
-            logger.warn('[useUltravoxSession] CustomEvent.detail is present but not a string or suitable object. Detail:', detail);
-            // statusString remains 'unknown_sdk_status_payload'
-        }
-    } else if ('data' in event && typeof (event as any).data === 'string') { // Check for MessageEvent like structures or other .data properties
-        statusString = (event as any).data;
-        eventForCallbackDetails = (event as any).data; // Use event.data for details callback
-        logger.log(`[useUltravoxSession] Status extracted from event.data: "${statusString}"`);
-    } else if ('status' in event && typeof (event as any).status === 'string') { // If the event object itself has a status
-        statusString = (event as any).status;
-        // eventForCallbackDetails remains the full event
-        logger.log(`[useUltravoxSession] Status extracted from event.status: "${statusString}"`);
+      const detail = event.detail;
+      eventDetails = detail;
+      
+      if (detail.status && typeof detail.status === 'string') {
+        statusString = detail.status;
+        logger.log(`[useUltravoxSession] Status from event.detail.status: "${statusString}"`);
+      } else if (typeof detail === 'string') {
+        statusString = detail;
+        logger.log(`[useUltravoxSession] Status from event.detail: "${statusString}"`);
+      } else {
+        logger.warn('[useUltravoxSession] Unexpected event.detail structure:', detail);
+      }
     } else {
-        // If no common patterns match, log and use default statusString
-        logger.warn('[useUltravoxSession] Could not extract status string using common patterns. Full event:', event);
-        // statusString remains 'unknown_sdk_status_payload', eventForCallbackDetails remains the full event
+      logger.warn('[useUltravoxSession] Event is not a CustomEvent or missing detail:', event);
     }
 
-    // Using logger.log, assuming logger.logClientEvent might not be universally available or configured
-    // If specific client event logging is needed, this could be logger.logClientEvent(...)
-    logger.log(`[useUltravoxSession] SDK Status Event processed. Extracted status: "${statusString}"`, { details: eventForCallbackDetails });
+    logger.log(`[useUltravoxSession] Processing status: "${statusString}"`);
 
-    if (propsRef.current.onStatusChange) {
-        propsRef.current.onStatusChange(statusString, eventForCallbackDetails);
+    // Handle microphone management based on SDK best practices
+    if (statusString === 'idle' && sessionRef.current) {
+      logger.log('[useUltravoxSession] Session reached idle state, attempting to unmute microphone');
+      sessionRef.current.unmuteMic()
+        .then(() => {
+          logger.log('[useUltravoxSession] Microphone unmuted successfully');
+          propsRef.current.onStatusChange('listening', eventDetails);
+        })
+        .catch((error) => {
+          logger.error('[useUltravoxSession] Failed to unmute microphone:', error);
+          propsRef.current.onStatusChange(statusString, eventDetails);
+        });
+    } else {
+      propsRef.current.onStatusChange(statusString, eventDetails);
     }
   }, []); // propsRef is stable
 
@@ -205,7 +196,7 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
     }
 
     try {
-      sessionRef.current = new UltravoxSession({ experimentalMessages: ["debug"] });
+      sessionRef.current = new UltravoxSession();
       // Add Debug Logging
       console.log('[useUltravoxSession] DEBUG: UltravoxSession instance created. sessionRef.current:', sessionRef.current);
       console.log('[useUltravoxSession] DEBUG: typeof sessionRef.current.addEventListener:', typeof sessionRef.current?.addEventListener);
