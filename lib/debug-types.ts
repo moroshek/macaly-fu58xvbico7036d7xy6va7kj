@@ -92,3 +92,30 @@ export interface DebugModeOptions {
   monitorNetwork: boolean;
   trackPerformance: boolean;
 }
+
+/**
+ * Interface for debug mode options
+ */
+export interface DebugModeOptions {
+  enabled: boolean;
+  verboseLogging: boolean;
+  showDevTools: boolean;
+  logToConsole: boolean;
+  monitorNetwork: boolean;
+  trackPerformance: boolean;
+}
+
+/**
+ * Interface for Ultravox debug information
+ */
+export interface UltravoxDebugInfo {
+  hasSession: boolean;
+  status: string;
+  isActive: boolean;
+  micPermission: boolean | null;
+  uiState: string;
+  transcriptLength: number;
+  callId: string | null;
+  isOnline: boolean;
+  errorMessage: string | null;
+}
