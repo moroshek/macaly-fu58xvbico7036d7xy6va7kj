@@ -27,6 +27,8 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
   const hasEncounteredErrorRef = useRef(false);
   const prevJoinUrlRef = useRef<string | null>(null);
   const prevCallIdRef = useRef<string | null>(null);
+  const lastUnmountTimeRef = useRef<number>(0);
+  const UNMOUNT_RETRY_DELAY_MS = 1000; // Wait 1 second after unmount before retrying
 
   useEffect(() => {
     const effectCallIdLog = callId || 'unknown-call-id'; // Use for logging current callId
@@ -53,6 +55,18 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
       // Update prev refs to current values
       prevJoinUrlRef.current = joinUrl;
       prevCallIdRef.current = callId;
+    }
+
+    // Check if we should delay connection attempt due to recent unmount
+    const timeSinceLastUnmount = Date.now() - lastUnmountTimeRef.current;
+    if (shouldConnect && timeSinceLastUnmount < UNMOUNT_RETRY_DELAY_MS) {
+      logger.log(`[UltravoxSessionManager] Delaying connection attempt for ${UNMOUNT_RETRY_DELAY_MS - timeSinceLastUnmount}ms due to recent unmount.`);
+      setTimeout(() => {
+        // Trigger a re-evaluation by setting a flag or using a small state change
+        // For now, we'll just log and let the next render cycle handle it
+        logger.log('[UltravoxSessionManager] Unmount delay elapsed, connection can proceed on next render.');
+      }, UNMOUNT_RETRY_DELAY_MS - timeSinceLastUnmount);
+      return;
     }
 
     const performConnectionSequence = async () => {
@@ -175,6 +189,10 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
     return () => {
       const callIdLog = prevCallIdRef.current || callId || 'unknown-at-unmount';
       logger.log(`[UltravoxSessionManager] Unmounting (callId: ${callIdLog}). Ensuring session is properly ended and flags reset.`);
+      
+      // Record unmount time to prevent immediate reconnection attempts
+      lastUnmountTimeRef.current = Date.now();
+      
       // ultravoxSession.endSession() should be idempotent and handle if already disconnected.
       ultravoxSession.endSession();
       

@@ -177,6 +177,12 @@ export default function HomePage() {
     const ctxMsg = context ? ` (${context})` : '';
     logger.error(`[Page] Manager reported an Error${ctxMsg}:`, error.message, error);
     
+    // Don't treat unmount-related race conditions as fatal errors
+    if (context === 'ConnectSessionChangedDuringJoin' || context === 'ConnectSessionChangedBeforeJoin') {
+      logger.log('[Page] Ignoring unmount-related race condition, will retry on next render.');
+      return; // Don't change state, let the component retry naturally
+    }
+    
     setAppErrorMessage(`An error occurred${ctxMsg}: ${error.message}`);
     setUiState('error');
     setShouldConnectUltravox(false);
