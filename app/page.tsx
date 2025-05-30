@@ -2,20 +2,12 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import dynamic from 'next/dynamic';
 import { useAppState } from '@/store/useAppState';
 import { Utterance } from '@/lib/types';
 import { BackendService } from '@/lib/backend-service'; 
 import { ErrorOverlay } from '@/components/ErrorOverlay';
+import { UltravoxSessionManager } from '@/components/UltravoxSessionManager';
 import { logger } from '@/lib/logger';
-
-const UltravoxSessionManager = dynamic(
-  () => import('@/components/UltravoxSessionManager').then(mod => mod.UltravoxSessionManager || mod.default),
-  {
-    ssr: false,
-    loading: () => <div data-testid="ultravox-loading" style={{ padding: '20px', textAlign: 'center', color: '#555' }}>Initializing audio systems... Please wait.</div>,
-  }
-);
 
 export default function HomePage() {
   // State from Zustand store
@@ -181,11 +173,11 @@ export default function HomePage() {
         setShouldConnectUltravox(false);
         break;
     }
-  }, [setUvClientStatus, setUiState, setAppErrorMessage]);
+  }, []); // Remove ALL dependencies to make callback truly stable
 
   const handleManagerTranscriptUpdate = useCallback((transcripts: Utterance[]) => {
     setCurrentTranscript(transcripts);
-  }, [setCurrentTranscript]);
+  }, []);
 
   const handleManagerSessionEnd = useCallback((details: { code?: number; reason?: string; error?: Error }) => {
     logger.log('[Page] Manager Session End event received:', details);
@@ -205,7 +197,7 @@ export default function HomePage() {
       logger.log('[Page] Session ended normally.');
       setUiState('callEnded'); 
     }
-  }, [setShouldConnectUltravox, setUvClientStatus, setAppErrorMessage, setUiState]);
+  }, []);
 
   const handleManagerError = useCallback((error: Error, context?: string) => {
     const ctxMsg = context ? ` (${context})` : '';
@@ -220,7 +212,7 @@ export default function HomePage() {
     setAppErrorMessage(`An error occurred${ctxMsg}: ${error.message}`);
     setUiState('error');
     setShouldConnectUltravox(false);
-  }, [setAppErrorMessage, setUiState]);
+  }, []);
 
   const handleRetryFromError = useCallback(() => {
     logger.log('[Page] Retry button clicked from error state.');
@@ -233,7 +225,7 @@ export default function HomePage() {
     setUiState('idle');
     setSummaryData(null);
     setAnalysisData(null);
-  }, [setAppErrorMessage, setAppCallId, setAppJoinUrl, setCurrentTranscript, setUvClientStatus, setUiState]);
+  }, []);
 
   const handleFullReset = useCallback(() => {
     logger.log('[Page] Full Reset button clicked.');
@@ -242,7 +234,7 @@ export default function HomePage() {
     setSummaryData(null);
     setAnalysisData(null);
     setIsProcessing(false);
-  }, [resetState]);
+  }, []);
 
   const handleManagerExperimentalMessage = useCallback((message: any) => {
     logger.log('[Page] Manager Experimental Message:', message);
@@ -407,6 +399,7 @@ export default function HomePage() {
 
           {appJoinUrl && appCallId && (
             <UltravoxSessionManager
+              key={`session-${appCallId}`}
               joinUrl={appJoinUrl}
               callId={appCallId}
               shouldConnect={shouldConnectUltravox}
