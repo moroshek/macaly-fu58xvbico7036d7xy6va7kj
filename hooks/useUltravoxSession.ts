@@ -49,22 +49,22 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
     const statusString = sessionRef.current.status || 'unknown_status';
     logger.log(`[useUltravoxSession] Current session status: "${statusString}"`);
 
+    // Always report the status change first
+    propsRef.current.onStatusChange(statusString, { timestamp: Date.now() });
+
     // Handle microphone management based on SDK best practices
+    // Only unmute after reporting the idle status
     if (statusString === 'idle' && sessionRef.current) {
       logger.log('[useUltravoxSession] Session reached idle state, attempting to unmute microphone');
       sessionRef.current.unmuteMic()
         .then(() => {
           logger.log('[useUltravoxSession] Microphone unmuted successfully');
-          // Check status again after unmuting in case it changed
-          const newStatus = sessionRef.current?.status || 'listening';
-          propsRef.current.onStatusChange(newStatus, { previousStatus: statusString });
+          // Status should automatically change to 'listening' and trigger another status event
         })
         .catch((error) => {
           logger.error('[useUltravoxSession] Failed to unmute microphone:', error);
-          propsRef.current.onStatusChange(statusString, { error });
+          propsRef.current.onStatusChange('error', { error });
         });
-    } else {
-      propsRef.current.onStatusChange(statusString, { timestamp: Date.now() });
     }
   }, []); // propsRef is stable
 
@@ -191,7 +191,11 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
     }
 
     try {
-      sessionRef.current = new UltravoxSession();
+      // Initialize with proper configuration following SDK best practices
+      sessionRef.current = new UltravoxSession({
+        experimentalMessages: ["debug"]
+      });
+      
       // Add Debug Logging
       console.log('[useUltravoxSession] DEBUG: UltravoxSession instance created. sessionRef.current:', sessionRef.current);
       console.log('[useUltravoxSession] DEBUG: typeof sessionRef.current.addEventListener:', typeof sessionRef.current?.addEventListener);

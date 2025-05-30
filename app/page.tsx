@@ -136,9 +136,18 @@ export default function HomePage() {
     setUvClientStatus(status);
 
     switch (status) {
+      case 'connecting':
+        // Only update UI state if we're not already connecting to prevent unmount cycles
+        if (uiState !== 'connecting') {
+          setUiState('connecting');
+        }
+        setAppErrorMessage(null);
+        break;
       case 'idle':
         // Session connected and media ready, but microphone still muted
-        setUiState('connecting');
+        if (uiState !== 'connecting') {
+          setUiState('connecting');
+        }
         setAppErrorMessage(null);
         break;
       case 'listening':
