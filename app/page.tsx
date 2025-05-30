@@ -220,18 +220,43 @@ export default function HomePage() {
     setShouldConnectUltravox(false);
   }, []);
 
-  const handleRetryFromError = useCallback(() => {
-    logger.log('[Page] Retry button clicked from error state.');
+  const handleRetryFromError = useCallback(async () => {
+    logger.log('[Page] Retry button clicked from error state - forcing new call creation.');
+    
+    // Clear all state completely
     setAppErrorMessage(null);
     setAppCallId(null); 
     setAppJoinUrl(null);
     setCurrentTranscript([]);
     setUvClientStatus('disconnected');
     setShouldConnectUltravox(false); 
-    setUiState('idle');
     setSummaryData(null);
     setAnalysisData(null);
-  }, []);
+    
+    // Start fresh interview with new call creation
+    setUiState('fetchingCallDetails');
+    
+    try {
+      const details = await BackendService.getInstance().initiateIntake();
+      if (details && details.callId && details.joinUrl) {
+        logger.log('[Page] NEW Call details fetched for retry:', details);
+        setAppCallId(details.callId);
+        setAppJoinUrl(details.joinUrl);
+        setShouldConnectUltravox(true);
+        setUiState('connecting'); 
+      } else {
+        throw new Error('Incomplete call details received from backend on retry.');
+      }
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error during retry call setup.';
+      logger.error('[Page] Failed to initiate intake on retry:', errMsg, error);
+      setAppErrorMessage(`Retry failed: ${errMsg}`);
+      setUiState('error');
+      setShouldConnectUltravox(false);
+      setAppCallId(null);
+      setAppJoinUrl(null);
+    }
+  }, [setUiState, setAppErrorMessage, setCurrentTranscript, setAppCallId, setAppJoinUrl]);
 
   const handleFullReset = useCallback(() => {
     logger.log('[Page] Full Reset button clicked.');
