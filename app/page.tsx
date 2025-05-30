@@ -132,20 +132,28 @@ export default function HomePage() {
   }, [currentTranscript, appCallId, setShouldConnectUltravox, setUiState, setAppErrorMessage]);
 
   const handleManagerStatusChange = useCallback((status: string, details?: any) => {
-    logger.log('[Page] Manager Status Change received:', { status, details, currentUIState: uiState });
-    setUvClientStatus(status);
+    // Use refs to get current values to avoid stale closure
+    const currentUIState = useAppState.getState().uiState;
+    const currentUVStatus = useAppState.getState().uvClientStatus;
+    
+    logger.log('[Page] Manager Status Change received:', { status, details, currentUIState, currentUVStatus });
+    
+    // Only update UV client status if it's actually different
+    if (currentUVStatus !== status) {
+      setUvClientStatus(status);
+    }
 
     switch (status) {
       case 'connecting':
         // Only update UI state if we're not already connecting to prevent unmount cycles
-        if (uiState !== 'connecting') {
+        if (currentUIState !== 'connecting') {
           setUiState('connecting');
         }
         setAppErrorMessage(null);
         break;
       case 'idle':
         // Session connected and media ready, but microphone still muted
-        if (uiState !== 'connecting') {
+        if (currentUIState !== 'connecting') {
           setUiState('connecting');
         }
         setAppErrorMessage(null);
@@ -158,7 +166,7 @@ export default function HomePage() {
       case 'thinking':
       case 'speaking':
         // Keep in interviewing state during conversation
-        if (uiState !== 'interviewing') {
+        if (currentUIState !== 'interviewing') {
           setUiState('interviewing');
         }
         break;
@@ -173,7 +181,7 @@ export default function HomePage() {
         setShouldConnectUltravox(false);
         break;
     }
-  }, [setUvClientStatus, setUiState, setAppErrorMessage, uiState]);
+  }, [setUvClientStatus, setUiState, setAppErrorMessage]);
 
   const handleManagerTranscriptUpdate = useCallback((transcripts: Utterance[]) => {
     setCurrentTranscript(transcripts);
