@@ -36,9 +36,55 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
 
   const endSessionRef = useRef<((isCleanupCall?: boolean) => Promise<void>) | null>(null);
 
-  const handleStatus = useCallback((status: string, details?: any) => {
-    logger.log('[useUltravoxSession] SDK Status:', status, details);
-    propsRef.current.onStatusChange(status, details);
+  // Modified handleStatus to inspect the event object
+  const handleStatus = useCallback((event: Event) => {
+    logger.log('[useUltravoxSession] Raw SDK Status Event:', event);
+    let statusString = 'unknown';
+    let eventDetail: any = null; // Using any for flexibility as structure varies
+
+    // Try common patterns for custom events or SDK-specific event structures
+    if (event instanceof CustomEvent && event.detail) {
+        eventDetail = event.detail;
+        if (typeof eventDetail === 'string') {
+            statusString = eventDetail;
+            logger.log(`[useUltravoxSession] Status extracted from CustomEvent.detail (string): "${statusString}"`);
+        } else if (typeof eventDetail === 'object' && eventDetail !== null && 'status' in eventDetail && typeof eventDetail.status === 'string') {
+            statusString = eventDetail.status;
+            logger.log(`[useUltravoxSession] Status extracted from CustomEvent.detail.status: "${statusString}"`);
+        } else if (typeof eventDetail === 'object' && eventDetail !== null) {
+            // Fallback if detail is an object but doesn't have a 'status' field or it's not a string
+            logger.warn('[useUltravoxSession] Status event.detail is an object but has no "status" string property or it is not a string. Detail:', eventDetail);
+            // Attempt to stringify, or use a default status
+            try {
+                statusString = JSON.stringify(eventDetail); // Potentially noisy, but useful for debugging
+            } catch (e) {
+                logger.error('[useUltravoxSession] Error stringifying eventDetail:', e);
+                statusString = 'complex_object_error';
+            }
+        } else {
+            logger.warn('[useUltravoxSession] CustomEvent.detail is present but not a string or suitable object. Detail:', eventDetail);
+            statusString = 'unknown_custom_event_detail_type';
+        }
+    } else if ('data' in event && typeof (event as any).data === 'string') { // Check for MessageEvent like structures or other .data properties
+        statusString = (event as any).data;
+        eventDetail = (event as any).data; // Capture data as detail
+        logger.log(`[useUltravoxSession] Status extracted from event.data: "${statusString}"`);
+    } else if ('status' in event && typeof (event as any).status === 'string') { // If the event object itself has a status (less common for CustomEvents)
+        statusString = (event as any).status;
+        eventDetail = event; // Capture the whole event as detail if status is directly on it
+        logger.log(`[useUltravoxSession] Status extracted from event.status: "${statusString}"`);
+    } else {
+        logger.warn('[useUltravoxSession] Could not extract status string using common patterns. Full event:', event);
+        // Fallback to a generic status, or stringify the event if small enough (be cautious)
+        statusString = 'unknown_event_structure';
+        eventDetail = event; // Pass the whole event for inspection
+    }
+
+    logger.log(`[useUltravoxSession] SDK Status Event processed. Extracted status: "${statusString}"`, eventDetail ? { eventDetail } : {});
+
+    if (propsRef.current.onStatusChange) {
+        propsRef.current.onStatusChange(statusString, eventDetail || event);
+    }
   }, []); // propsRef is stable
 
   const handleTranscripts = useCallback((transcripts: Utterance[]) => {
