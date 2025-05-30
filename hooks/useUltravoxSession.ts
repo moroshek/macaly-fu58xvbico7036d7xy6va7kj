@@ -36,9 +36,57 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
 
   const endSessionRef = useRef<((isCleanupCall?: boolean) => Promise<void>) | null>(null);
 
-  const handleStatus = useCallback((status: string, details?: any) => {
-    logger.log('[useUltravoxSession] SDK Status:', status, details);
-    propsRef.current.onStatusChange(status, details);
+  // Modified handleStatus to inspect the event object
+  const handleStatus = useCallback((event: Event) => {
+    logger.log('[useUltravoxSession] Raw SDK Status Event:', event);
+    let statusString = 'unknown_sdk_status_payload'; // Specific default as per refinement
+    let eventForCallbackDetails: any = event; // Default to passing the full event for details
+
+    if (event instanceof CustomEvent && event.detail) {
+        const detail = event.detail;
+        eventForCallbackDetails = detail; // Pass detail as the second arg for onStatusChange
+
+        if (typeof detail === 'string') {
+            statusString = detail;
+            logger.log(`[useUltravoxSession] Status extracted from CustomEvent.detail (string): "${statusString}"`);
+        } else if (typeof detail === 'object' && detail !== null) {
+            if ('status' in detail && typeof detail.status === 'string') {
+                statusString = detail.status;
+                logger.log(`[useUltravoxSession] Status extracted from CustomEvent.detail.status: "${statusString}"`);
+            } else if ('newStatus' in detail && typeof detail.newStatus === 'string') { // Added check for newStatus
+                statusString = detail.newStatus;
+                logger.log(`[useUltravoxSession] Status extracted from CustomEvent.detail.newStatus: "${statusString}"`);
+            } else {
+                // If detail is an object but doesn't match known structures, log and use default statusString
+                logger.warn('[useUltravoxSession] Status event.detail is an object but has no recognized status string property (checked: status, newStatus). Detail:', detail);
+                // statusString remains 'unknown_sdk_status_payload'
+            }
+        } else {
+            // If detail is not a string or a suitable object, log and use default statusString
+            logger.warn('[useUltravoxSession] CustomEvent.detail is present but not a string or suitable object. Detail:', detail);
+            // statusString remains 'unknown_sdk_status_payload'
+        }
+    } else if ('data' in event && typeof (event as any).data === 'string') { // Check for MessageEvent like structures or other .data properties
+        statusString = (event as any).data;
+        eventForCallbackDetails = (event as any).data; // Use event.data for details callback
+        logger.log(`[useUltravoxSession] Status extracted from event.data: "${statusString}"`);
+    } else if ('status' in event && typeof (event as any).status === 'string') { // If the event object itself has a status
+        statusString = (event as any).status;
+        // eventForCallbackDetails remains the full event
+        logger.log(`[useUltravoxSession] Status extracted from event.status: "${statusString}"`);
+    } else {
+        // If no common patterns match, log and use default statusString
+        logger.warn('[useUltravoxSession] Could not extract status string using common patterns. Full event:', event);
+        // statusString remains 'unknown_sdk_status_payload', eventForCallbackDetails remains the full event
+    }
+
+    // Using logger.log, assuming logger.logClientEvent might not be universally available or configured
+    // If specific client event logging is needed, this could be logger.logClientEvent(...)
+    logger.log(`[useUltravoxSession] SDK Status Event processed. Extracted status: "${statusString}"`, { details: eventForCallbackDetails });
+
+    if (propsRef.current.onStatusChange) {
+        propsRef.current.onStatusChange(statusString, eventForCallbackDetails);
+    }
   }, []); // propsRef is stable
 
   const handleTranscripts = useCallback((transcripts: Utterance[]) => {
@@ -220,15 +268,67 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
     }, CONNECTION_TIMEOUT_MS);
 
     try {
+      // Check sessionRef.current before joinCall
+      if (!sessionRef.current) {
+        logger.error('[useUltravoxSession] SessionRef is null before calling joinCall. Aborting connect.');
+        if (propsRef.current.onError) {
+            propsRef.current.onError(new Error("Session instance was unexpectedly cleared before joinCall."), "ConnectPreJoinCall");
+        }
+        if (connectionTimeoutRef.current) {
+            clearTimeout(connectionTimeoutRef.current);
+            connectionTimeoutRef.current = null;
+        }
+        // It's possible that onStatusChange was already called with 'connecting'
+        // Notify of disconnection if appropriate, or let existing error handling do it.
+        // For now, just return, as further operations are unsafe. Consider calling endSession if partial state exists.
+        // However, endSession might try to operate on sessionRef.current too.
+        // Safest to just clear timeout and report error.
+        propsRef.current.onStatusChange('disconnected', { error: 'session_null_pre_join' });
+        return;
+      }
+
       await sessionRef.current.joinCall(joinUrl);
       logger.log('[useUltravoxSession] joinCall resolved.');
-      clearTimeout(connectionTimeoutRef.current);
-      connectionTimeoutRef.current = null;
+      
+      // Check sessionRef.current again after joinCall resolved (it might have been cleared by another async process, e.g. unmount)
+      if (!sessionRef.current) {
+        logger.error('[useUltravoxSession] SessionRef became null after joinCall resolved. Cannot access socket.');
+        if (propsRef.current.onError) {
+            propsRef.current.onError(new Error("Session instance was unexpectedly cleared after joinCall resolved."), "ConnectPostJoinCallNullSession");
+        }
+        if (connectionTimeoutRef.current) { // Timeout should have been cleared if joinCall succeeded, but as a safeguard
+            clearTimeout(connectionTimeoutRef.current);
+            connectionTimeoutRef.current = null;
+        }
+        propsRef.current.onStatusChange('disconnected', { error: 'session_null_post_join' });
+        return; 
+      }
+
+      // Successfully called joinCall and sessionRef.current is still valid.
+      // Now, clear the connection timeout.
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+        connectionTimeoutRef.current = null;
+      }
 
       socketRef.current = sessionRef.current.socket;
 
-      if (socketRef.current) {
-        isSessionActiveRef.current = true; // Mark session as active
+      // Check if socket is available on sessionRef.current
+      if (!socketRef.current) {
+        logger.error('[useUltravoxSession] sessionRef.current.socket is null/undefined after joinCall resolved.');
+        const err = new Error('Socket not available on session after joinCall.');
+        if (propsRef.current.onError) {
+            propsRef.current.onError(err, "ConnectPostJoinCallNullSocket");
+        }
+        propsRef.current.onStatusChange('disconnected', { error: 'sdk_socket_missing_post_join_check' });
+        // Even if joinCall succeeded, if socket isn't there, we can't proceed.
+        // endSession will also try to clean up sessionRef.current, which is fine.
+        endSession(true); // Mark as cleanup call, this will also handle sessionRef.current = null
+        return;
+      }
+      
+      // Socket obtained, proceed
+      isSessionActiveRef.current = true; // Mark session as active
         propsRef.current.onStatusChange('connected');
         logger.log('[useUltravoxSession] Raw WebSocket listeners being attached.');
 
@@ -253,20 +353,17 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
           propsRef.current.onStatusChange('disconnected', { code: event.code, reason: event.reason});
           endSession(true); // Mark as cleanup call
         };
-      } else {
-        const err = new Error('SDK socket not available after joinCall');
-        logger.error('[useUltravoxSession] Connect Error:', err.message);
-        propsRef.current.onError(err, 'ConnectNoSocket');
-        propsRef.current.onStatusChange('disconnected', { error: 'sdk_socket_missing' });
-        // clearTimeout already handled if joinCall succeeded
-        endSession(true); // Mark as cleanup call
-      }
+      // The following 'else' block was orphaned due to the 'if (!socketRef.current) { ... return; }' check above.
+      // Removing the orphaned 'else' block. The logic for a null socket is already handled.
     } catch (error) {
-      logger.error('[useUltravoxSession] Error during joinCall:', error);
-      propsRef.current.onError(error instanceof Error ? error : new Error(String(error)), 'JoinCallError');
+      logger.error('[useUltravoxSession] Error during joinCall or its immediate aftermath:', error);
+      // Ensure timeout is cleared on any error during this try block
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+        connectionTimeoutRef.current = null;
+      }
+      propsRef.current.onError(error instanceof Error ? error : new Error(String(error)), 'JoinCallCatchAll');
       propsRef.current.onStatusChange('disconnected', { error: error instanceof Error ? error.message : 'join_call_exception' });
-      if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
-      connectionTimeoutRef.current = null;
       endSession(true); // Mark as cleanup call
     }
   }, [endSession]);
