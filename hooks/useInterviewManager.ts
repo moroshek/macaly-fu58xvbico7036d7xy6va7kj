@@ -7,7 +7,8 @@ import {
   START_INTERVIEW_DELAY_MS
 } from '@/lib/config';
 import { Utterance, SummaryData } from '@/lib/types';
-import { AppState } from '@/hooks/useAppState';
+// Note: AppState type is now replaced by the Zustand store structure
+// Using inline type definition for this hook's props instead
 import { useAppLogger } from '@/hooks/useAppLogger';
 import { BackendService } from '@/lib/backend-service';
 import { ErrorHandler } from '@/lib/error-handler';
@@ -18,7 +19,13 @@ import { checkBrowserCompatibility, checkMicrophonePermissions } from '@/lib/bro
 
 // Props for the useInterviewManager hook
 export interface UseInterviewManagerProps {
-  appState: AppState;
+  appState: {
+    uiState: string;
+    isOnline: boolean;
+    currentTranscript: Utterance[];
+    callId: string;
+    uvStatus: string;
+  };
   setUiState: (uiState: UIState) => void;
   setCallId: (callId: string) => void;
   setInterviewActive: (isActive: boolean) => void;
