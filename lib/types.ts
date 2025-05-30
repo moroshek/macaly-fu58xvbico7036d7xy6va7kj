@@ -2,10 +2,11 @@
  * Defines shared TypeScript types used across the application.
  */
 
-export type Utterance = {
-  speaker: string; // Typically 'user' or 'agent'
-  text: string;
-};
+export interface Utterance { // Changed from type to interface
+  speaker: string;       // Typically 'user' or 'agent'
+  transcript: string;    // Changed from text to transcript
+  timestamp: number;     // Added timestamp
+}
 
 export type SummaryData = {
   chiefComplaint: string | null;
