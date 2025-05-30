@@ -191,7 +191,13 @@ export default function HomePage() {
       const reason = details.reason || details.error?.message || 'Unknown session error';
       const codeSuffix = details.code ? ` (Code: ${details.code})` : '';
       logger.error('[Page] Session ended abnormally:', { reason, code: details.code });
-      setAppErrorMessage(`Session ended unexpectedly: ${reason}${codeSuffix}`);
+      
+      // Special handling for 4409 Conflict errors
+      if (details.code === 4409 && details.reason === 'Conflict') {
+        setAppErrorMessage('Voice service conflict detected - this may be a temporary server-side issue. Please try again in a moment.');
+      } else {
+        setAppErrorMessage(`Session ended unexpectedly: ${reason}${codeSuffix}`);
+      }
       setUiState('error');
     } else {
       logger.log('[Page] Session ended normally.');

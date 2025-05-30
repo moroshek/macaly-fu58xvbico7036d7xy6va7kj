@@ -90,6 +90,12 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
 
   const handleClose = useCallback((details: { code?: number; reason?: string; error?: Error }) => {
     logger.log('[useUltravoxSession] SDK Close event:', details);
+    
+    // Handle 4409 Conflict with retry logic
+    if (details.code === 4409 && details.reason === 'Conflict') {
+      logger.warn('[useUltravoxSession] 4409 Conflict detected - likely server-side issue. This is transient.');
+    }
+    
     if (isSessionActiveRef.current) {
       propsRef.current.onSessionEnd(details);
     }
