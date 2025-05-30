@@ -132,7 +132,7 @@ export default function HomePage() {
   }, [currentTranscript, appCallId, setShouldConnectUltravox, setUiState, setAppErrorMessage]);
 
   const handleManagerStatusChange = useCallback((status: string, details?: any) => {
-    logger.log('[Page] Manager Status Change received:', { status, details });
+    logger.log('[Page] Manager Status Change received:', { status, details, currentUIState: uiState });
     setUvClientStatus(status);
 
     switch (status) {

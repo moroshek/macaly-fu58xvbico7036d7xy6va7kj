@@ -1,7 +1,7 @@
 // components/UltravoxSessionManager.tsx
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useUltravoxSession } from '@/hooks/useUltravoxSession';
 import { Utterance } from '@/lib/types';
 import { logger } from '@/lib/logger';
@@ -20,8 +20,18 @@ interface UltravoxSessionManagerProps {
 }
 
 export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
-  const { joinUrl, callId, shouldConnect, ...callbacks } = props;
-  const ultravoxSession = useUltravoxSession(callbacks); // Callbacks are passed to the hook
+  const { joinUrl, callId, shouldConnect, onStatusChange, onTranscriptUpdate, onSessionEnd, onError, onExperimentalMessage } = props;
+  
+  // Memoize callbacks to prevent unnecessary re-renders
+  const callbacks = useMemo(() => ({
+    onStatusChange,
+    onTranscriptUpdate, 
+    onSessionEnd,
+    onError,
+    onExperimentalMessage
+  }), [onStatusChange, onTranscriptUpdate, onSessionEnd, onError, onExperimentalMessage]);
+  
+  const ultravoxSession = useUltravoxSession(callbacks);
   const hasAttemptedConnectionRef = useRef(false);
   const performingSessionManagementRef = useRef(false); // Renamed for clarity
   const hasEncounteredErrorRef = useRef(false);
@@ -75,7 +85,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
         // This error should ideally be caught by earlier checks in the effect.
         // If it still happens, it's an unexpected state.
         if(shouldConnect) { // Only error if we actually intended to connect
-            callbacks.onError(new Error('Connection cannot proceed: joinUrl or callId became null unexpectedly.'), 'PreCheck');
+            onError(new Error('Connection cannot proceed: joinUrl or callId became null unexpectedly.'), 'PreCheck');
         }
         return; // Should not proceed.
       }
@@ -132,7 +142,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
         
         hasEncounteredErrorRef.current = true; // Set error flag
         logger.log(`[UltravoxSessionManager] Set hasEncounteredErrorRef to true for callId: ${effectCallIdLog}`);
-        callbacks.onError(error instanceof Error ? error : new Error(errorMessage), 'ConnectionSetup');
+        onError(error instanceof Error ? error : new Error(errorMessage), 'ConnectionSetup');
         // DO NOT reset hasAttemptedConnectionRef here. It signifies an attempt was made for this callId/joinUrl.
         // The hasEncounteredErrorRef will prevent immediate retries for this context.
       } finally {
