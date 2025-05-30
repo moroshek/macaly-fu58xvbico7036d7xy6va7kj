@@ -1,0 +1,31 @@
+# .gcloudignore
+
+# Ignore the Git directory
+.git/
+
+# Ignore the Python virtual environment
+venv/
+/venv/
+
+# Ignore the large local models directory (as they will be downloaded from GCS by the app)
+# This might still be relevant if any local models are ever used, otherwise benign.
+models/
+/models/
+
+# Ignore self hosting folder with older files before using inference endpoint
+/self-hosting
+self-hosting/
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore the Documentation folder
+Documentation/
+/Documentation/ 
+
+# Ignore other common files if you have them (optional)
+# .DS_Store
+# .vscode/
+# *.log
