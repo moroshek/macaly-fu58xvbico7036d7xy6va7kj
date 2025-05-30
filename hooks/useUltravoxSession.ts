@@ -245,7 +245,11 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
 
   const connect = useCallback(async (joinUrl: string): Promise<void> => {
     logger.log('[useUltravoxSession] connect called with URL:', joinUrl);
-    if (!sessionRef.current) {
+    
+    // Store session reference at start to detect if it changes during async operations
+    const initialSession = sessionRef.current;
+    
+    if (!initialSession) {
       const err = new Error('Session not initialized before connect');
       logger.error('[useUltravoxSession] Connect Error:', err.message);
       propsRef.current.onError(err, 'ConnectError');
@@ -268,35 +272,44 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
     }, CONNECTION_TIMEOUT_MS);
 
     try {
-      // Check sessionRef.current before joinCall
-      if (!sessionRef.current) {
-        logger.error('[useUltravoxSession] SessionRef is null before calling joinCall. Aborting connect.');
+      // Check if session was cleared before we start
+      if (sessionRef.current !== initialSession) {
+        logger.error('[useUltravoxSession] Session reference changed before joinCall. Likely unmounted during initialization.');
         if (propsRef.current.onError) {
-            propsRef.current.onError(new Error("Session instance was unexpectedly cleared before joinCall."), "ConnectPreJoinCall");
+            propsRef.current.onError(new Error("Session was cleared before joinCall - component likely unmounted"), "ConnectSessionChangedBeforeJoin");
         }
         if (connectionTimeoutRef.current) {
             clearTimeout(connectionTimeoutRef.current);
             connectionTimeoutRef.current = null;
         }
-        // It's possible that onStatusChange was already called with 'connecting'
-        // Notify of disconnection if appropriate, or let existing error handling do it.
-        // For now, just return, as further operations are unsafe. Consider calling endSession if partial state exists.
-        // However, endSession might try to operate on sessionRef.current too.
-        // Safest to just clear timeout and report error.
-        propsRef.current.onStatusChange('disconnected', { error: 'session_null_pre_join' });
+        propsRef.current.onStatusChange('disconnected', { error: 'session_cleared_before_join' });
         return;
       }
 
-      await sessionRef.current.joinCall(joinUrl);
+      await initialSession.joinCall(joinUrl);
       logger.log('[useUltravoxSession] joinCall resolved.');
       
-      // Check sessionRef.current again after joinCall resolved (it might have been cleared by another async process, e.g. unmount)
+      // Check if session was cleared during the async joinCall operation
+      if (sessionRef.current !== initialSession) {
+        logger.error('[useUltravoxSession] Session reference changed during joinCall. Component likely unmounted.');
+        if (propsRef.current.onError) {
+            propsRef.current.onError(new Error("Session was cleared during joinCall - component likely unmounted"), "ConnectSessionChangedDuringJoin");
+        }
+        if (connectionTimeoutRef.current) {
+            clearTimeout(connectionTimeoutRef.current);
+            connectionTimeoutRef.current = null;
+        }
+        propsRef.current.onStatusChange('disconnected', { error: 'session_cleared_during_join' });
+        return; 
+      }
+
+      // Ensure session is still the one we started with
       if (!sessionRef.current) {
-        logger.error('[useUltravoxSession] SessionRef became null after joinCall resolved. Cannot access socket.');
+        logger.error('[useUltravoxSession] SessionRef became null after joinCall resolved.');
         if (propsRef.current.onError) {
             propsRef.current.onError(new Error("Session instance was unexpectedly cleared after joinCall resolved."), "ConnectPostJoinCallNullSession");
         }
-        if (connectionTimeoutRef.current) { // Timeout should have been cleared if joinCall succeeded, but as a safeguard
+        if (connectionTimeoutRef.current) {
             clearTimeout(connectionTimeoutRef.current);
             connectionTimeoutRef.current = null;
         }
