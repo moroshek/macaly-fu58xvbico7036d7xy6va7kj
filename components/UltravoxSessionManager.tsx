@@ -38,6 +38,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
   const hasEncounteredErrorRef = useRef(false);
   const prevJoinUrlRef = useRef<string | null>(null);
   const prevCallIdRef = useRef<string | null>(null);
+  const lastUsedJoinUrlRef = useRef<string | null>(null); // Track URLs we've already tried
 
   // Connection state management to prevent 4409 conflicts
   const isConnectionAllowed = useAppState(state => state.isConnectionAllowed);
@@ -69,6 +70,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
       });
       hasAttemptedConnectionRef.current = false;
       hasEncounteredErrorRef.current = false;
+      lastUsedJoinUrlRef.current = null; // Reset URL tracking for new context
       // No need to reset performingSessionManagementRef here as it guards the async function itself.
       // Update prev refs to current values
       prevJoinUrlRef.current = joinUrl;
@@ -131,6 +133,13 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
           throw new Error('Connection aborted as shouldConnect turned false during initialization.');
         }
         
+        // Critical check: prevent reusing the same joinUrl
+        if (lastUsedJoinUrlRef.current === joinUrl) {
+          throw new Error(`Attempting to reuse joinUrl that was already tried: ${joinUrl.substring(0, 30)}...`);
+        }
+        
+        logger.log(`[UltravoxSessionManager] About to connect to joinUrl: ${joinUrl.substring(0, 50)}... for callId: ${effectCallIdLog}`);
+        lastUsedJoinUrlRef.current = joinUrl; // Mark this URL as used
         await ultravoxSession.connect(joinUrl);
         logger.log('[UltravoxSessionManager] ultravoxSession.connect() succeeded.');
         
@@ -233,6 +242,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
       hasAttemptedConnectionRef.current = false;
       performingSessionManagementRef.current = false;
       hasEncounteredErrorRef.current = false;
+      lastUsedJoinUrlRef.current = null; // Clear URL tracking on unmount
       prevJoinUrlRef.current = null; // Clear previous context tracking
       prevCallIdRef.current = null;
       

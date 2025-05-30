@@ -62,7 +62,12 @@ export default function HomePage() {
     try {
       const details = await BackendService.getInstance().initiateIntake();
       if (details && details.callId && details.joinUrl) {
-        logger.log('[Page] Call details fetched successfully:', details);
+        logger.log('[Page] Call details fetched successfully:', { 
+          callId: details.callId, 
+          joinUrlPreview: details.joinUrl.substring(0, 50) + '...',
+          timestamp: new Date().toISOString(),
+          action: 'NEW_INTERVIEW_START'
+        });
         setAppCallId(details.callId);
         setAppJoinUrl(details.joinUrl);
         setShouldConnectUltravox(true);
@@ -239,7 +244,12 @@ export default function HomePage() {
     try {
       const details = await BackendService.getInstance().initiateIntake();
       if (details && details.callId && details.joinUrl) {
-        logger.log('[Page] NEW Call details fetched for retry:', details);
+        logger.log('[Page] NEW Call details fetched for retry:', { 
+          callId: details.callId, 
+          joinUrlPreview: details.joinUrl.substring(0, 50) + '...',
+          timestamp: new Date().toISOString(),
+          action: 'RETRY_AFTER_ERROR'
+        });
         setAppCallId(details.callId);
         setAppJoinUrl(details.joinUrl);
         setShouldConnectUltravox(true);

@@ -513,7 +513,18 @@ async def initiate_intake_call():
         call_cooldown["last_call"] = current_time
         logger.info(f"Ultravox call initiated successfully. Call ID: {call_id}")
         
-        return {"joinUrl": join_url, "callId": call_id}
+        # Create response with cache-control headers to prevent any caching
+        from fastapi import Response
+        response = Response(
+            content=json.dumps({"joinUrl": join_url, "callId": call_id}),
+            media_type="application/json",
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, private",
+                "Pragma": "no-cache", 
+                "Expires": "0"
+            }
+        )
+        return response
     except requests.exceptions.RequestException as e:
         logger.error(f"Error calling Ultravox API to initiate call: {e}", exc_info=True)
         raise HTTPException(status_code=502, detail=f"Error contacting voice AI service: {str(e)[:200]}...")
