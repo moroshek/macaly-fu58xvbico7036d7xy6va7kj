@@ -10,6 +10,11 @@ interface AppState {
   appErrorMessage: string | null;
   currentTranscript: Utterance[];
   isInterviewActive: boolean;
+  
+  // Connection state management to prevent 4409 conflicts
+  activeConnectionCallId: string | null;
+  connectionAttemptInProgress: boolean;
+  lastConnectionAttempt: number | null;
 
   // Actions
   setUiState: (uiState: string) => void;
@@ -19,10 +24,14 @@ interface AppState {
   setAppErrorMessage: (appErrorMessage: string | null) => void;
   setCurrentTranscript: (currentTranscript: Utterance[]) => void;
   setIsInterviewActive: (isInterviewActive: boolean) => void;
+  setActiveConnectionCallId: (callId: string | null) => void;
+  setConnectionAttemptInProgress: (inProgress: boolean) => void;
+  setLastConnectionAttempt: (timestamp: number | null) => void;
+  isConnectionAllowed: (callId: string) => boolean;
   resetState: () => void;
 }
 
-const initialState: Omit<AppState, 'setUiState' | 'setUvClientStatus' | 'setAppCallId' | 'setAppJoinUrl' | 'setAppErrorMessage' | 'setCurrentTranscript' | 'setIsInterviewActive' | 'resetState'> = {
+const initialState: Omit<AppState, 'setUiState' | 'setUvClientStatus' | 'setAppCallId' | 'setAppJoinUrl' | 'setAppErrorMessage' | 'setCurrentTranscript' | 'setIsInterviewActive' | 'setActiveConnectionCallId' | 'setConnectionAttemptInProgress' | 'setLastConnectionAttempt' | 'isConnectionAllowed' | 'resetState'> = {
   uiState: 'idle',
   uvClientStatus: 'disconnected',
   appCallId: null,
@@ -30,9 +39,12 @@ const initialState: Omit<AppState, 'setUiState' | 'setUvClientStatus' | 'setAppC
   appErrorMessage: null,
   currentTranscript: [],
   isInterviewActive: false,
+  activeConnectionCallId: null,
+  connectionAttemptInProgress: false,
+  lastConnectionAttempt: null,
 };
 
-export const useAppState = create<AppState>()((set) => ({
+export const useAppState = create<AppState>()((set, get) => ({
   ...initialState,
 
   // Actions
@@ -43,9 +55,30 @@ export const useAppState = create<AppState>()((set) => ({
   setAppErrorMessage: (appErrorMessage: string | null) => set({ appErrorMessage }),
   setCurrentTranscript: (currentTranscript: Utterance[]) => set({ currentTranscript }),
   setIsInterviewActive: (isInterviewActive: boolean) => set({ isInterviewActive }),
+  setActiveConnectionCallId: (callId: string | null) => set({ activeConnectionCallId: callId }),
+  setConnectionAttemptInProgress: (inProgress: boolean) => set({ connectionAttemptInProgress: inProgress }),
+  setLastConnectionAttempt: (timestamp: number | null) => set({ lastConnectionAttempt: timestamp }),
+  
+  // Connection management logic
+  isConnectionAllowed: (callId: string) => {
+    const state = get();
+    const now = Date.now();
+    
+    // Don't allow if same call is already being attempted
+    if (state.activeConnectionCallId === callId && state.connectionAttemptInProgress) {
+      return false;
+    }
+    
+    // Don't allow if a connection attempt was made in the last 2 seconds
+    if (state.lastConnectionAttempt && (now - state.lastConnectionAttempt) < 2000) {
+      return false;
+    }
+    
+    return true;
+  },
   
   resetState: () => set(initialState),
 }));
 
 // Log creation and description
-console.log('Created store/useAppState.ts: Zustand store for managing global application state including UI state, call details, transcript, and error messages.');
+console.log('Updated store/useAppState.ts: Zustand store with connection state management to prevent 4409 WebSocket conflicts.');

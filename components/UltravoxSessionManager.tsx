@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useMemo } from 'react';
 import { useUltravoxSession } from '@/hooks/useUltravoxSession';
+import { useAppState } from '@/store/useAppState';
 import { Utterance } from '@/lib/types';
 import { logger } from '@/lib/logger';
 import { checkBrowserCompatibility, checkMicrophonePermissions } from '@/lib/browser-compat';
@@ -37,6 +38,14 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
   const hasEncounteredErrorRef = useRef(false);
   const prevJoinUrlRef = useRef<string | null>(null);
   const prevCallIdRef = useRef<string | null>(null);
+
+  // Connection state management to prevent 4409 conflicts
+  const isConnectionAllowed = useAppState(state => state.isConnectionAllowed);
+  const setActiveConnectionCallId = useAppState(state => state.setActiveConnectionCallId);
+  const setConnectionAttemptInProgress = useAppState(state => state.setConnectionAttemptInProgress);
+  const setLastConnectionAttempt = useAppState(state => state.setLastConnectionAttempt);
+  const activeConnectionCallId = useAppState(state => state.activeConnectionCallId);
+  const connectionAttemptInProgress = useAppState(state => state.connectionAttemptInProgress);
 
   useEffect(() => {
     const effectCallIdLog = callId || 'unknown-call-id'; // Use for logging current callId
@@ -135,6 +144,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
         // The hasEncounteredErrorRef will prevent immediate retries for this context.
       } finally {
         performingSessionManagementRef.current = false;
+        setConnectionAttemptInProgress(false);
         logger.log(`[UltravoxSessionManager] Connection sequence finished for callId: ${effectCallIdLog}. performingSessionManagementRef set to false.`);
       }
     };
@@ -146,7 +156,23 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
         // Ensure performingSessionManagementRef is false if we bail out here, otherwise it might get stuck.
         if (performingSessionManagementRef.current) performingSessionManagementRef.current = false;
       } else if (!hasAttemptedConnectionRef.current && !hasEncounteredErrorRef.current) {
+        // Check connection state management to prevent 4409 conflicts
+        if (!isConnectionAllowed(callId)) {
+          logger.warn(`[UltravoxSessionManager] Connection not allowed for callId: ${effectCallIdLog}. Preventing duplicate attempt.`, {
+            activeConnectionCallId,
+            connectionAttemptInProgress,
+            callId
+          });
+          return;
+        }
+        
         logger.log(`[UltravoxSessionManager] Conditions met for new connection attempt for callId: ${effectCallIdLog}. Starting sequence.`);
+        
+        // Mark connection attempt as starting
+        setActiveConnectionCallId(callId);
+        setConnectionAttemptInProgress(true);
+        setLastConnectionAttempt(Date.now());
+        
         performConnectionSequence();
       } else if (hasAttemptedConnectionRef.current && hasEncounteredErrorRef.current) {
         logger.log(`[UltravoxSessionManager] Connection previously attempted for callId ${effectCallIdLog} but encountered an error. Not retrying automatically.`);
@@ -170,6 +196,11 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
         }
         hasAttemptedConnectionRef.current = false;
         hasEncounteredErrorRef.current = false; // Reset error flag when explicitly disconnected
+        
+        // Clear connection state management
+        setActiveConnectionCallId(null);
+        setConnectionAttemptInProgress(false);
+        
         logger.log(`[UltravoxSessionManager] Reset hasAttemptedConnectionRef and hasEncounteredErrorRef for callId ${effectCallIdLog} due to shouldConnect being false.`);
       } else {
         logger.log(`[UltravoxSessionManager] shouldConnect is false for callId ${effectCallIdLog}, and no active/attempted session. No action needed.`);
@@ -180,7 +211,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
            logger.warn('[UltravoxSessionManager] Reset performingSessionManagementRef as shouldConnect is false and it was still true.');
       }
     }
-  }, [shouldConnect, joinUrl, callId, ultravoxSession, callbacks]);
+  }, [shouldConnect, joinUrl, callId, ultravoxSession, callbacks, isConnectionAllowed, setActiveConnectionCallId, setConnectionAttemptInProgress, setLastConnectionAttempt]);
 
   // Cleanup effect for component unmount
   useEffect(() => {
@@ -199,9 +230,14 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
       hasEncounteredErrorRef.current = false;
       prevJoinUrlRef.current = null; // Clear previous context tracking
       prevCallIdRef.current = null;
+      
+      // Clear connection state management on unmount
+      setActiveConnectionCallId(null);
+      setConnectionAttemptInProgress(false);
+      
       logger.log(`[UltravoxSessionManager] All refs reset during unmount for callId: ${callIdLog}.`);
     };
-  }, [ultravoxSession, callId]); // Include callId to log the correct one on unmount if it was available. ultravoxSession is stable.
+  }, [ultravoxSession, callId, setActiveConnectionCallId, setConnectionAttemptInProgress]); // Include callId to log the correct one on unmount if it was available. ultravoxSession is stable.
 
   return (
     <div style={{ display: 'none' }} data-testid="ultravox-manager">
