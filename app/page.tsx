@@ -1,7 +1,7 @@
 // app/page.tsx
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAppState } from '@/store/useAppState';
 import { Utterance } from '@/lib/types';
 import { BackendService } from '@/lib/backend-service'; 
@@ -240,6 +240,29 @@ export default function HomePage() {
     logger.log('[Page] Manager Experimental Message:', message);
   }, []);
 
+  // Memoize the entire UltravoxSessionManager component to prevent re-renders
+  const memoizedSessionManager = useMemo(() => (
+    <UltravoxSessionManager
+      joinUrl={appJoinUrl}
+      callId={appCallId}
+      shouldConnect={shouldConnectUltravox && !!(appJoinUrl && appCallId)}
+      onStatusChange={handleManagerStatusChange}
+      onTranscriptUpdate={handleManagerTranscriptUpdate}
+      onSessionEnd={handleManagerSessionEnd}
+      onError={handleManagerError}
+      onExperimentalMessage={handleManagerExperimentalMessage}
+    />
+  ), [
+    appJoinUrl,
+    appCallId, 
+    shouldConnectUltravox,
+    handleManagerStatusChange,
+    handleManagerTranscriptUpdate,
+    handleManagerSessionEnd,
+    handleManagerError,
+    handleManagerExperimentalMessage
+  ]);
+
   // Styles
   const containerStyle: React.CSSProperties = {
     fontFamily: 'system-ui, sans-serif',
@@ -397,19 +420,7 @@ export default function HomePage() {
             </div>
           )}
 
-          {appJoinUrl && appCallId && (
-            <UltravoxSessionManager
-              key={`session-${appCallId}`}
-              joinUrl={appJoinUrl}
-              callId={appCallId}
-              shouldConnect={shouldConnectUltravox}
-              onStatusChange={handleManagerStatusChange}
-              onTranscriptUpdate={handleManagerTranscriptUpdate}
-              onSessionEnd={handleManagerSessionEnd}
-              onError={handleManagerError}
-              onExperimentalMessage={handleManagerExperimentalMessage}
-            />
-          )}
+          {memoizedSessionManager}
 
           <h3>Live Transcript</h3>
           <div style={transcriptStyle} data-testid="transcript-area">
