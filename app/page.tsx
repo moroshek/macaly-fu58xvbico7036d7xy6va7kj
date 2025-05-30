@@ -35,23 +35,25 @@ export default function HomePage() {
   const resetState = useAppState(state => state.resetState);
 
   const [shouldConnectUltravox, setShouldConnectUltravox] = useState(false);
+  const [summaryData, setSummaryData] = useState<any>(null);
+  const [analysisData, setAnalysisData] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
     logger.log('[Page] Component Mounted.');
-    // Ensure initial UI state is idle on mount, in case of hot-reloads or strange cached state
-    if (uiState !== 'idle') {
-       // setUiState('idle'); // This might be too aggressive if state is intentionally preserved
-    }
     return () => {
       logger.log('[Page] Component Unmounted.');
-      // Optional: Tell manager to disconnect if unmounting while active.
-      // However, manager's own cleanup should handle this.
-      // setShouldConnectUltravox(false); 
     };
-  }, []); // Removed setUiState from deps to avoid loop if it was included
+  }, []);
 
   useEffect(() => {
-    logger.log('[Page] Relevant state change detected:', { uiState, uvClientStatus, appCallIdProvided: !!appCallId, shouldConnectUltravox, errorMsgPresent: !!appErrorMessage });
+    logger.log('[Page] Relevant state change detected:', { 
+      uiState, 
+      uvClientStatus, 
+      appCallIdProvided: !!appCallId, 
+      shouldConnectUltravox, 
+      errorMsgPresent: !!appErrorMessage 
+    });
   }, [uiState, uvClientStatus, appCallId, shouldConnectUltravox, appErrorMessage]);
 
   const handleStartInterviewClick = useCallback(async () => {
@@ -59,41 +61,75 @@ export default function HomePage() {
     setUiState('fetchingCallDetails');
     setAppErrorMessage(null);
     setCurrentTranscript([]); 
-    setAppCallId(null); // Clear previous details
+    setAppCallId(null);
     setAppJoinUrl(null);
-    setShouldConnectUltravox(false); // Ensure it's false before trying to set true
+    setShouldConnectUltravox(false);
+    setSummaryData(null);
+    setAnalysisData(null);
 
     try {
-      const details = await BackendService.getInstance().getCallDetails();
+      const details = await BackendService.getInstance().initiateIntake();
       if (details && details.callId && details.joinUrl) {
         logger.log('[Page] Call details fetched successfully:', details);
         setAppCallId(details.callId);
         setAppJoinUrl(details.joinUrl);
-        setShouldConnectUltravox(true); // This will trigger the manager
+        setShouldConnectUltravox(true);
         setUiState('connecting'); 
       } else {
-        // This case includes details being null or parts of details being null/undefined
         throw new Error('Incomplete call details received from backend.');
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error during call setup.';
-      logger.error('[Page] Failed to get call details or critical error:', errMsg, error);
+      logger.error('[Page] Failed to initiate intake:', errMsg, error);
       setAppErrorMessage(`Setup failed: ${errMsg}`);
       setUiState('error');
       setShouldConnectUltravox(false);
-      setAppCallId(null); // Ensure cleared on error
+      setAppCallId(null);
       setAppJoinUrl(null);
     }
-  }, [setUiState, setAppErrorMessage, setCurrentTranscript, setAppCallId, setAppJoinUrl, setShouldConnectUltravox]);
+  }, [setUiState, setAppErrorMessage, setCurrentTranscript, setAppCallId, setAppJoinUrl]);
 
-  const handleEndInterviewClick = useCallback(() => {
+  const handleEndInterviewClick = useCallback(async () => {
     logger.log('[Page] End Interview button clicked.');
-    // Primary action is to tell manager to disconnect.
-    // Manager's onSessionEnd will handle UI state changes related to session closing.
     setShouldConnectUltravox(false); 
-    setUiState('processing'); // Indicate something is happening post-call.
-    logger.log('[Page] Ending interview process initiated. Manager will handle actual session termination.');
-  }, [setShouldConnectUltravox, setUiState]);
+    setUiState('processing');
+    setIsProcessing(true);
+
+    // Submit transcript to backend
+    if (currentTranscript.length > 0 && appCallId) {
+      try {
+        const transcriptText = currentTranscript
+          .map(utt => `${utt.speaker}: ${utt.transcript}`)
+          .join('\n');
+        
+        logger.log('[Page] Submitting transcript to backend...');
+        const response = await BackendService.getInstance().submitTranscript(appCallId, transcriptText);
+        
+        if (response.summary) {
+          setSummaryData(response.summary);
+          logger.log('[Page] Summary received:', response.summary);
+        }
+        
+        if (response.analysis) {
+          setAnalysisData(response.analysis);
+          logger.log('[Page] Analysis received:', response.analysis);
+        }
+        
+        setUiState('completed');
+        setIsProcessing(false);
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
+        logger.error('[Page] Failed to submit transcript:', errMsg, error);
+        setAppErrorMessage(`Processing failed: ${errMsg}`);
+        setUiState('error');
+        setIsProcessing(false);
+      }
+    } else {
+      logger.warn('[Page] No transcript to submit or missing call ID.');
+      setUiState('idle');
+      setIsProcessing(false);
+    }
+  }, [currentTranscript, appCallId, setShouldConnectUltravox, setUiState, setAppErrorMessage]);
 
   const handleManagerStatusChange = useCallback((status: string, details?: any) => {
     logger.log('[Page] Manager Status Change received:', { status, details });
@@ -102,152 +138,291 @@ export default function HomePage() {
     switch (status) {
       case 'listening':
         setUiState('interviewing');
-        setAppErrorMessage(null); // Clear any previous non-critical errors
+        setAppErrorMessage(null);
         break;
       case 'failed':
-      case 'error': // General error from manager/SDK
+      case 'error':
         setAppErrorMessage(details?.error?.message || details?.reason || 'Ultravox connection problem.');
         setUiState('error');
-        setShouldConnectUltravox(false); // Stop trying to connect
+        setShouldConnectUltravox(false);
         break;
-      // 'closed' or 'ended' are better handled by onSessionEnd
-      // 'connecting', 'initialized' etc. are intermediate, usually no UI change needed from here
     }
-  }, [setUvClientStatus, setUiState, setAppErrorMessage, setShouldConnectUltravox]);
+  }, [setUvClientStatus, setUiState, setAppErrorMessage]);
 
   const handleManagerTranscriptUpdate = useCallback((transcripts: Utterance[]) => {
-    // logger.log('[Page] Manager Transcript Update. Count:', transcripts.length); // Can be very noisy
     setCurrentTranscript(transcripts);
   }, [setCurrentTranscript]);
 
   const handleManagerSessionEnd = useCallback((details: { code?: number; reason?: string; error?: Error }) => {
     logger.log('[Page] Manager Session End event received:', details);
     
-    setShouldConnectUltravox(false); // Crucial: ensure manager is flagged to be disconnected
+    setShouldConnectUltravox(false);
     setUvClientStatus('closed');
 
-    const isAbnormalOrError = details.error || (details.code && ![1000, 1005].includes(details.code)); // 1000 normal, 1005 no status
+    const isAbnormalOrError = details.error || (details.code && ![1000, 1005].includes(details.code));
 
     if (isAbnormalOrError) {
       const reason = details.reason || details.error?.message || 'Unknown session error';
       const codeSuffix = details.code ? ` (Code: ${details.code})` : '';
-      logger.error('[Page] Session ended abnormally or with an error:', { reason, code: details.code });
+      logger.error('[Page] Session ended abnormally:', { reason, code: details.code });
       setAppErrorMessage(`Session ended unexpectedly: ${reason}${codeSuffix}`);
       setUiState('error');
     } else {
       logger.log('[Page] Session ended normally.');
-      // Decide what state to go to: 'callEnded' for review, or 'idle' to allow new call.
       setUiState('callEnded'); 
     }
   }, [setShouldConnectUltravox, setUvClientStatus, setAppErrorMessage, setUiState]);
 
   const handleManagerError = useCallback((error: Error, context?: string) => {
-    // This is for errors reported by the manager not covered by specific status changes or sessionEnd
     const ctxMsg = context ? ` (${context})` : '';
     logger.error(`[Page] Manager reported an Error${ctxMsg}:`, error.message, error);
     
     setAppErrorMessage(`An error occurred${ctxMsg}: ${error.message}`);
     setUiState('error');
-    setShouldConnectUltravox(false); // Stop connection attempts
-  }, [setAppErrorMessage, setUiState, setShouldConnectUltravox]);
+    setShouldConnectUltravox(false);
+  }, [setAppErrorMessage, setUiState]);
 
   const handleRetryFromError = useCallback(() => {
     logger.log('[Page] Retry button clicked from error state.');
-    // Reset all relevant states to allow a fresh start
     setAppErrorMessage(null);
     setAppCallId(null); 
     setAppJoinUrl(null);
     setCurrentTranscript([]);
     setUvClientStatus('disconnected');
     setShouldConnectUltravox(false); 
-    setUiState('idle'); 
-    logger.log('[Page] State reset for retry. User can click "Start Interview".');
-  }, [setAppErrorMessage, setAppCallId, setAppJoinUrl, setCurrentTranscript, setUvClientStatus, setUiState, setShouldConnectUltravox]);
+    setUiState('idle');
+    setSummaryData(null);
+    setAnalysisData(null);
+  }, [setAppErrorMessage, setAppCallId, setAppJoinUrl, setCurrentTranscript, setUvClientStatus, setUiState]);
 
   const handleFullReset = useCallback(() => {
     logger.log('[Page] Full Reset button clicked.');
-    resetState(); // Resets Zustand store (uiState will become 'idle')
-    setShouldConnectUltravox(false); // Reset local component state
-    // No need to manually set other states as resetState handles store properties.
-    logger.log('[Page] Application state fully reset.');
+    resetState();
+    setShouldConnectUltravox(false);
+    setSummaryData(null);
+    setAnalysisData(null);
+    setIsProcessing(false);
   }, [resetState]);
 
   const handleManagerExperimentalMessage = useCallback((message: any) => {
     logger.log('[Page] Manager Experimental Message:', message);
-    // Potentially, you could also set this to a new state in useAppState
-    // if you wanted to display these messages in the UI for debugging.
-    // For now, just logging is fine as per the request.
-  }, []); // No dependencies needed if it only calls logger
-  
-  // --- Basic Styling (can be moved to a CSS module) ---
-  const pageStyle: React.CSSProperties = { fontFamily: 'system-ui, sans-serif', padding: '20px', maxWidth: '800px', margin: '40px auto', background: '#f4f7f6', borderRadius: '8px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)' };
-  const headerStyle: React.CSSProperties = { textAlign: 'center', color: '#333', marginBottom: '30px' };
-  const statusBoxStyle: React.CSSProperties = { background: '#fff', padding: '15px', borderRadius: '5px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: '20px' };
-  const controlsStyle: React.CSSProperties = { display: 'flex', gap: '15px', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap' };
-  const buttonStyle: React.CSSProperties = { padding: '12px 20px', fontSize: '1rem', cursor: 'pointer', border: 'none', borderRadius: '5px', transition: 'background-color 0.2s ease' };
-  const startButtonStyle: React.CSSProperties = { ...buttonStyle, backgroundColor: '#28a745', color: 'white' };
-  const endButtonStyle: React.CSSProperties = { ...buttonStyle, backgroundColor: '#dc3545', color: 'white' };
-  const disabledButtonStyle: React.CSSProperties = { ...buttonStyle, backgroundColor: '#6c757d', color: '#ccc' };
-  const transcriptAreaStyle: React.CSSProperties = { border: '1px solid #e0e0e0', padding: '15px', minHeight: '150px', maxHeight: '400px', overflowY: 'auto', backgroundColor: '#fff', borderRadius: '5px' };
-  const loadingStyle: React.CSSProperties = { padding: '20px', textAlign: 'center', color: '#555', fontSize: '1.1rem' };
-  const transcriptEntryStyle: React.CSSProperties = { marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px dashed #eee' };
+  }, []);
+
+  // Styles
+  const containerStyle: React.CSSProperties = {
+    fontFamily: 'system-ui, sans-serif',
+    padding: '20px',
+    maxWidth: '1200px',
+    margin: '0 auto',
+    background: '#f5f5f5',
+    minHeight: '100vh'
+  };
+
+  const headerStyle: React.CSSProperties = {
+    textAlign: 'center',
+    color: '#333',
+    marginBottom: '30px',
+    padding: '20px',
+    background: 'white',
+    borderRadius: '10px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+  };
+
+  const gridStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gridTemplateRows: 'auto auto',
+    gap: '20px',
+    marginTop: '20px'
+  };
+
+  const area1Style: React.CSSProperties = {
+    gridColumn: '1 / 3',
+    background: 'white',
+    padding: '20px',
+    borderRadius: '10px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    minHeight: '300px'
+  };
+
+  const area2Style: React.CSSProperties = {
+    background: 'white',
+    padding: '20px',
+    borderRadius: '10px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    minHeight: '250px'
+  };
+
+  const area3Style: React.CSSProperties = {
+    background: 'white',
+    padding: '20px',
+    borderRadius: '10px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    minHeight: '250px'
+  };
+
+  const buttonStyle: React.CSSProperties = {
+    padding: '12px 24px',
+    fontSize: '16px',
+    cursor: 'pointer',
+    border: 'none',
+    borderRadius: '5px',
+    transition: 'background-color 0.2s ease',
+    marginRight: '10px'
+  };
+
+  const startButtonStyle: React.CSSProperties = {
+    ...buttonStyle,
+    backgroundColor: '#28a745',
+    color: 'white'
+  };
+
+  const endButtonStyle: React.CSSProperties = {
+    ...buttonStyle,
+    backgroundColor: '#dc3545',
+    color: 'white'
+  };
+
+  const disabledButtonStyle: React.CSSProperties = {
+    ...buttonStyle,
+    backgroundColor: '#6c757d',
+    color: '#ccc',
+    cursor: 'not-allowed'
+  };
+
+  const transcriptStyle: React.CSSProperties = {
+    border: '1px solid #e0e0e0',
+    padding: '15px',
+    height: '200px',
+    overflowY: 'auto',
+    backgroundColor: '#f9f9f9',
+    borderRadius: '5px',
+    marginTop: '10px'
+  };
+
+  const summaryStyle: React.CSSProperties = {
+    backgroundColor: '#f0f8ff',
+    padding: '15px',
+    borderRadius: '5px',
+    fontSize: '14px',
+    lineHeight: '1.6',
+    maxHeight: '200px',
+    overflowY: 'auto'
+  };
+
+  const analysisStyle: React.CSSProperties = {
+    backgroundColor: '#f0fff0',
+    padding: '15px',
+    borderRadius: '5px',
+    fontSize: '14px',
+    lineHeight: '1.6',
+    maxHeight: '200px',
+    overflowY: 'auto'
+  };
 
   return (
-    <div style={pageStyle}>
-      <header style={headerStyle}><h1>AI Interview Platform</h1></header>
+    <div style={containerStyle}>
+      <header style={headerStyle}>
+        <h1>MedIntake - AI Medical Interview System</h1>
+        <p style={{ color: '#666', marginTop: '10px' }}>
+          Status: <strong>{uiState}</strong> | Connection: <strong>{uvClientStatus}</strong>
+        </p>
+      </header>
 
-      <div style={statusBoxStyle}>
-        <p><strong>Application Status:</strong> <span data-testid="ui-state" style={{fontWeight: 'bold', color: uiState === 'error' ? 'red' : 'green'}}>{uiState}</span></p>
-        <p><strong>Connection Status:</strong> <span data-testid="uv-client-status">{uvClientStatus}</span></p>
-        {appCallId && <p><strong>Current Call ID:</strong> {appCallId}</p>}
-      </div>
+      <div style={gridStyle}>
+        {/* Area 1: Audio Interaction */}
+        <div style={area1Style}>
+          <h2>Audio Interview Control</h2>
+          
+          <div style={{ marginBottom: '20px' }}>
+            <button 
+              onClick={handleStartInterviewClick} 
+              disabled={!['idle', 'error', 'callEnded', 'completed'].includes(uiState)}
+              style={!['idle', 'error', 'callEnded', 'completed'].includes(uiState) ? disabledButtonStyle : startButtonStyle}
+              data-testid="start-interview-button"
+            >
+              Start Interview
+            </button>
+            <button 
+              onClick={handleEndInterviewClick} 
+              disabled={uiState !== 'interviewing'}
+              style={uiState !== 'interviewing' ? disabledButtonStyle : endButtonStyle}
+              data-testid="end-interview-button"
+            >
+              End Interview
+            </button>
+          </div>
 
-      <div style={controlsStyle}>
-        <button 
-          onClick={handleStartInterviewClick} 
-          disabled={!['idle', 'error', 'callEnded'].includes(uiState)}
-          style={!['idle', 'error', 'callEnded'].includes(uiState) ? disabledButtonStyle : startButtonStyle}
-          data-testid="start-interview-button"
-        >
-          Start New Interview
-        </button>
-        <button 
-          onClick={handleEndInterviewClick} 
-          disabled={uiState !== 'interviewing'}
-          style={uiState !== 'interviewing' ? disabledButtonStyle : endButtonStyle}
-          data-testid="end-interview-button"
-        >
-          End Current Interview
-        </button>
-      </div>
+          {['fetchingCallDetails', 'connecting'].includes(uiState) && (
+            <div style={{ textAlign: 'center', padding: '20px', color: '#007bff' }}>
+              <div>⏳ {uiState === 'fetchingCallDetails' ? 'Getting interview details...' : 'Connecting to AI assistant...'}</div>
+            </div>
+          )}
 
-      {['fetchingCallDetails', 'connecting'].includes(uiState) && (
-        <div data-testid="loading-indicator" style={loadingStyle}>Loading: {uiState}... Please wait.</div>
-      )}
+          {isProcessing && (
+            <div style={{ textAlign: 'center', padding: '20px', color: '#28a745' }}>
+              <div>⏳ Processing your interview data...</div>
+            </div>
+          )}
 
-      {/* UltravoxSessionManager is mounted when we have details and shouldConnect is true */}
-      {appJoinUrl && appCallId && ( /* Only attempt to render manager if essential props are present */
-        <UltravoxSessionManager
-          joinUrl={appJoinUrl}
-          callId={appCallId}
-          shouldConnect={shouldConnectUltravox} // This flag gates connection attempts within manager
-          onStatusChange={handleManagerStatusChange}
-          onTranscriptUpdate={handleManagerTranscriptUpdate}
-          onSessionEnd={handleManagerSessionEnd}
-          onError={handleManagerError}
-          onExperimentalMessage={handleManagerExperimentalMessage} // Add this line
-        />
-      )}
+          {appJoinUrl && appCallId && (
+            <UltravoxSessionManager
+              joinUrl={appJoinUrl}
+              callId={appCallId}
+              shouldConnect={shouldConnectUltravox}
+              onStatusChange={handleManagerStatusChange}
+              onTranscriptUpdate={handleManagerTranscriptUpdate}
+              onSessionEnd={handleManagerSessionEnd}
+              onError={handleManagerError}
+              onExperimentalMessage={handleManagerExperimentalMessage}
+            />
+          )}
 
-      <h3>Live Transcript:</h3>
-      <div style={transcriptAreaStyle} data-testid="transcript-area">
-        {currentTranscript.length === 0 && <p>No speech detected yet...</p>}
-        {currentTranscript.map((utt, i) => (
-          <p key={`${utt.speaker}-${utt.timestamp}-${i}`} style={transcriptEntryStyle}> 
-            <strong style={{color: utt.speaker === 'Bot' ? '#007bff' : '#28a745'}}>{utt.speaker}:</strong> {utt.transcript} 
-            <span style={{fontSize: '0.8em', color: '#777', marginLeft: '10px'}}>({new Date(utt.timestamp).toLocaleTimeString()})</span>
-          </p>
-        ))}
+          <h3>Live Transcript</h3>
+          <div style={transcriptStyle} data-testid="transcript-area">
+            {currentTranscript.length === 0 ? (
+              <p style={{ color: '#999', textAlign: 'center' }}>Conversation will appear here...</p>
+            ) : (
+              currentTranscript.map((utt, i) => (
+                <div key={`${utt.speaker}-${utt.timestamp}-${i}`} style={{ marginBottom: '10px' }}>
+                  <strong style={{ color: utt.speaker === 'agent' ? '#007bff' : '#28a745' }}>
+                    {utt.speaker === 'agent' ? 'AI Assistant' : 'Patient'}:
+                  </strong> {utt.transcript}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Area 2: Intake Summary */}
+        <div style={area2Style}>
+          <h2>Intake Summary (JSON)</h2>
+          <div style={summaryStyle}>
+            {summaryData ? (
+              <pre style={{ margin: 0, fontFamily: 'monospace' }}>
+                {JSON.stringify(summaryData, null, 2)}
+              </pre>
+            ) : (
+              <p style={{ color: '#999', textAlign: 'center' }}>
+                Summary will appear here after interview completion
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Area 3: Clinical Insights */}
+        <div style={area3Style}>
+          <h2>Clinical Insights</h2>
+          <div style={analysisStyle}>
+            {analysisData ? (
+              <div style={{ whiteSpace: 'pre-wrap' }}>{analysisData}</div>
+            ) : (
+              <p style={{ color: '#999', textAlign: 'center' }}>
+                Clinical analysis will appear here after interview completion
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
       {uiState === 'error' && appErrorMessage && (
