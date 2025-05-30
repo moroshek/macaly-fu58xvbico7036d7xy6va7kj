@@ -25,6 +25,53 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
     propsRef.current = props;
   }, [props]);
 
+  // Forward declaration for endSession to be used by handlers.
+  // Actual implementation of endSession will be defined later.
+  // This requires endSession to be available in the scope of handlers.
+  // We will define endSession properly and pass it as a dependency.
+  // To handle the circular dependency for useCallback (endSession needs handlers, error/close handlers need endSession):
+  // One common pattern is to use a ref for the function that might change, or ensure stable identity.
+  // For this refactoring, we will define handlers that call a stable reference to endSession.
+  // And endSession itself will reference these stable handlers.
+
+  const endSessionRef = useRef<((isCleanupCall?: boolean) => Promise<void>) | null>(null);
+
+  const handleStatus = useCallback((status: string, details?: any) => {
+    logger.log('[useUltravoxSession] SDK Status:', status, details);
+    propsRef.current.onStatusChange(status, details);
+  }, []); // propsRef is stable
+
+  const handleTranscripts = useCallback((transcripts: Utterance[]) => {
+    logger.log('[useUltravoxSession] SDK Transcripts count:', transcripts.length);
+    propsRef.current.onTranscriptUpdate(transcripts as Utterance[]);
+  }, []); // propsRef is stable
+
+  const handleError = useCallback((error: Error) => {
+    logger.error('[useUltravoxSession] SDK Error:', error);
+    propsRef.current.onError(error, 'UltravoxSDK');
+    if (endSessionRef.current) {
+      endSessionRef.current(true); // Mark as cleanup call
+    }
+  }, []); // propsRef is stable, endSessionRef.current is stable within a render
+
+  const handleClose = useCallback((details: { code?: number; reason?: string; error?: Error }) => {
+    logger.log('[useUltravoxSession] SDK Close event:', details);
+    if (isSessionActiveRef.current) {
+      propsRef.current.onSessionEnd(details);
+    }
+    if (endSessionRef.current) {
+      endSessionRef.current(true); // Mark as cleanup call
+    }
+  }, []); // propsRef and isSessionActiveRef are stable
+
+  const handleExperimentalMessage = useCallback((message: any) => {
+    logger.log('[useUltravoxSession] SDK Experimental Message:', message);
+    if (propsRef.current.onExperimentalMessage) {
+      propsRef.current.onExperimentalMessage(message);
+    }
+  }, []); // propsRef is stable
+
+
   const endSession = useCallback(async (isCleanupCall: boolean = false): Promise<void> => {
     logger.log('[useUltravoxSession] endSession called.', { isCleanupCall, sessionActive: isSessionActiveRef.current });
 
@@ -49,11 +96,24 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
 
     if (sessionRef.current) {
       logger.log('[useUltravoxSession] Cleaning up UltravoxSession.');
-      sessionRef.current.off('status');
-      sessionRef.current.off('transcripts');
-      sessionRef.current.off('error');
-      sessionRef.current.off('close');
-      sessionRef.current.off('experimental_message'); // Remove new listener
+      if (typeof sessionRef.current.removeEventListener === 'function') {
+        sessionRef.current.removeEventListener('status', handleStatus);
+        sessionRef.current.removeEventListener('transcripts', handleTranscripts);
+        sessionRef.current.removeEventListener('error', handleError);
+        sessionRef.current.removeEventListener('close', handleClose);
+        sessionRef.current.removeEventListener('experimental_message', handleExperimentalMessage);
+        logger.log('[useUltravoxSession] Event listeners removed via removeEventListener.');
+      } else {
+        logger.warn('[useUltravoxSession] sessionRef.current.removeEventListener is not a function. Attempting .off() as fallback.');
+        // Fallback for environments where removeEventListener might not be available on this object
+        if (typeof (sessionRef.current as any).off === 'function') {
+          (sessionRef.current as any).off('status');
+          (sessionRef.current as any).off('transcripts');
+          (sessionRef.current as any).off('error');
+          (sessionRef.current as any).off('close');
+          (sessionRef.current as any).off('experimental_message');
+        }
+      }
       
       try {
         if (typeof sessionRef.current.endCall === 'function') {
@@ -82,7 +142,12 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
       isSessionActiveRef.current = false;
     }
     logger.log('[useUltravoxSession] endSession finished.');
-  }, []); // Empty dependency array: propsRef handles prop updates.
+  }, [handleStatus, handleTranscripts, handleError, handleClose, handleExperimentalMessage]); // Dependencies for endSession
+
+  // Assign the main endSession to the ref so handlers can call it without circular useCallback deps.
+  useEffect(() => {
+    endSessionRef.current = endSession;
+  }, [endSession]);
 
   const initializeSession = useCallback(async (): Promise<void> => {
     logger.log('[useUltravoxSession] initializeSession called.');
@@ -92,56 +157,43 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
     }
 
     try {
-      // Changed experimentalMessages option
       sessionRef.current = new UltravoxSession({ experimentalMessages: ["debug"] });
-      logger.log('[useUltravoxSession] UltravoxSession created with experimentalMessages: ["debug"].');
-
-      sessionRef.current.on('status', (status, details) => {
-        logger.log('[useUltravoxSession] SDK Status:', status, details);
-        propsRef.current.onStatusChange(status, details);
-      });
-
-      sessionRef.current.on('transcripts', (transcripts) => {
-        logger.log('[useUltravoxSession] SDK Transcripts count:', transcripts.length);
-        propsRef.current.onTranscriptUpdate(transcripts as Utterance[]);
-      });
-
-      sessionRef.current.on('error', (error) => {
-        logger.error('[useUltravoxSession] SDK Error:', error);
-        propsRef.current.onError(error, 'UltravoxSDK');
-        // SDK errors can be session-ending.
-        endSession(true); // Mark as cleanup call
-      });
-
-      sessionRef.current.on('close', (details: { code?: number; reason?: string; error?: Error }) => {
-        logger.log('[useUltravoxSession] SDK Close event:', details);
-        if (isSessionActiveRef.current) {
-          propsRef.current.onSessionEnd(details);
-          // isSessionActiveRef.current = false; // This is now handled by endSession
-        }
-        endSession(true); // Mark as cleanup call
-      });
-
-      // Add new experimental_message event listener
-      if (propsRef.current.onExperimentalMessage) {
-        sessionRef.current.on('experimental_message', (message) => {
-          logger.log('[useUltravoxSession] SDK Experimental Message:', message);
-          propsRef.current.onExperimentalMessage?.(message);
-        });
-      } else {
-        sessionRef.current.on('experimental_message', (message) => {
-          logger.log('[useUltravoxSession] SDK Experimental Message (no prop handler):', message);
-        });
+      // Add Debug Logging
+      console.log('[useUltravoxSession] DEBUG: UltravoxSession instance created. sessionRef.current:', sessionRef.current);
+      console.log('[useUltravoxSession] DEBUG: typeof sessionRef.current.addEventListener:', typeof sessionRef.current?.addEventListener);
+      if (sessionRef.current && typeof sessionRef.current.addEventListener !== 'function') {
+        console.log('[useUltravoxSession] DEBUG: Available keys on sessionRef.current:', Object.keys(sessionRef.current));
       }
-      
-      isSessionActiveRef.current = false; // Initialized, but not "active" (i.e. connected)
-      logger.log('[useUltravoxSession] Session initialized and listeners attached (including experimental_message).');
+
+      // Implement Robust Check
+      if (sessionRef.current && typeof sessionRef.current.addEventListener === 'function') {
+        sessionRef.current.addEventListener('status', handleStatus);
+        sessionRef.current.addEventListener('transcripts', handleTranscripts);
+        sessionRef.current.addEventListener('error', handleError);
+        sessionRef.current.addEventListener('close', handleClose);
+        sessionRef.current.addEventListener('experimental_message', handleExperimentalMessage);
+        
+        isSessionActiveRef.current = false; 
+        logger.log('[useUltravoxSession] Session initialized and listeners attached via addEventListener.');
+      } else {
+        const errorMessage = '[useUltravoxSession] CRITICAL ERROR: UltravoxSession instance does not have an .addEventListener method or sessionRef.current is null.';
+        console.error(errorMessage, sessionRef.current);
+        if (propsRef.current.onError) {
+          propsRef.current.onError(new Error('SDK Error: session object invalid or .addEventListener method missing.'), 'SDKInitialization');
+        }
+        throw new Error(errorMessage);
+      }
     } catch (error) {
       logger.error('[useUltravoxSession] Failed to initialize session:', error);
-      propsRef.current.onError(error instanceof Error ? error : new Error(String(error)), 'InitializeError');
+      // Check if it's the custom error to avoid double reporting under a generic category
+      if (error instanceof Error && error.message.includes('CRITICAL ERROR: UltravoxSession instance does not have an .addEventListener method')) {
+         propsRef.current.onError(error, 'SDKInitializationCritical');
+      } else {
+         propsRef.current.onError(error instanceof Error ? error : new Error(String(error)), 'InitializeError');
+      }
       sessionRef.current = null;
     }
-  }, [endSession]);
+  }, [endSession, handleStatus, handleTranscripts, handleError, handleClose, handleExperimentalMessage]); // Added handlers to dependencies
 
   const connect = useCallback(async (joinUrl: string): Promise<void> => {
     logger.log('[useUltravoxSession] connect called with URL:', joinUrl);
@@ -226,9 +278,14 @@ export function useUltravoxSession(props: UseUltravoxSessionProps) {
   useEffect(() => {
     return () => {
       logger.log('[useUltravoxSession] Component unmounting. Ensuring session is ended.');
-      endSession(true); // Perform full cleanup, marked as a cleanup call.
+      // endSession is already stable due to useCallback and its own dependencies.
+      // The ref pattern ensures that if handleError/handleClose call endSession, they get the correct one.
+      if (endSessionRef.current) {
+        endSessionRef.current(true); // Perform full cleanup
+      }
     };
-  }, [endSession]); // endSession is stable.
+  }, []); // This useEffect should run once to set up the unmount cleanup.
+          // It correctly uses endSessionRef.current for the cleanup call.
 
   return { initializeSession, connect, endSession, getTranscripts };
 }
