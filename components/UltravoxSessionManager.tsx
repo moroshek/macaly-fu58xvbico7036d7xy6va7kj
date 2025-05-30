@@ -1,213 +1,152 @@
+// components/UltravoxSessionManager.tsx
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react'; // Added useRef
+import { useEffect, useRef } from 'react';
 import { useUltravoxSession } from '@/hooks/useUltravoxSession';
-// Assuming Utterance type is available, adjust path if necessary
-// If not available, this might cause an error during generation/compilation by the worker.
-// Fallback for worker: import type { Utterance } from './temp-types'; or use any[]
-import type { Utterance } from '@/lib/types'; 
+import { Utterance } from '@/lib/types';
+import { logger } from '@/lib/logger';
+import { checkBrowserCompatibility, checkMicrophonePermissions } from '@/lib/browser-compat';
+import { testWebSocketConnection } from '@/lib/ultravox-debug';
 
-export interface UltravoxManagerProps {
-  joinUrl: string;
-  callId?: string; // Optional, as per issue description
-  onTranscriptUpdate: (transcript: Utterance[]) => void; // Corrected type
-  onStatusChange: (status: string) => void; 
-  onSessionEnd: () => void;
-  onError: (error: Error) => void;
-  // Add any other necessary props based on useUltravoxSession needs
+interface UltravoxSessionManagerProps {
+  joinUrl: string | null; 
+  callId: string | null;  
+  shouldConnect: boolean;
+  onStatusChange: (status: string, details?: any) => void;
+  onTranscriptUpdate: (transcripts: Utterance[]) => void;
+  onSessionEnd: (details: { code?: number; reason?: string; error?: Error }) => void;
+  onError: (error: Error, context?: string) => void;
 }
 
-const UltravoxSessionManager: React.FC<UltravoxManagerProps> = (props) => {
-  const {
-    joinUrl,
-    callId,
-    onTranscriptUpdate,
-    onStatusChange,
-    onSessionEnd,
-    onError,
-  } = props;
-
-  // Renamed to avoid conflict if hook returns 'isConnecting'
-  const [isConnectingState, setIsConnectingState] = useState(true); 
-  const [initializationError, setInitializationError] = useState<string | null>(null);
-
-  // Destructure new methods and states from the hook
-  const { 
-    initializeSession, 
-    connect, 
-    endSession, 
-    sessionRef, // To check if session exists for cleanup
-    isConnecting: isUltravoxConnecting, // Hook's own connecting state
-    callStatus 
-  } = useUltravoxSession({
-    onTranscriptUpdate,
-    onStatusChange: (status) => {
-      if (isMounted.current) { // Check if component is still mounted
-        onStatusChange(status);
-        // This component's connecting state is now primarily driven by isUltravoxConnecting or callStatus changes
-        // but can also be set directly on terminal statuses if needed.
-        if (status === 'idle' || status === 'disconnected' || status === 'error') {
-          setIsConnectingState(false);
-        }
-        if (status === 'error' && !initializationError) { // If status is error, ensure error message is shown
-            // This might be redundant if onError callback is always reliably called by the hook
-            // setInitializationError("Session entered an error state."); 
-        }
-      }
-    },
-    onSessionEnd: () => {
-      if (isMounted.current) {
-        onSessionEnd();
-        setIsConnectingState(false);
-      }
-    },
-    onError: (error) => {
-      if (isMounted.current) {
-        onError(error);
-        setIsConnectingState(false);
-        setInitializationError(error.message || "An unknown error occurred.");
-      }
-    },
-  });
-
-  // Use a ref to track if component is mounted to avoid state updates on unmounted component
-  const isMounted = useRef(true);
-  useEffect(() => {
-    isMounted.current = true;
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
+export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
+  const { joinUrl, callId, shouldConnect, ...callbacks } = props;
+  const ultravoxSession = useUltravoxSession(callbacks); // Callbacks are passed to the hook
+  const hasAttemptedConnectionRef = useRef(false);
+  const performingPreChecksRef = useRef(false);
 
   useEffect(() => {
-    console.log('[UltravoxSessionManager] Main useEffect triggered. joinUrl:', joinUrl, 'callId:', callId);
-    if (isMounted.current) {
-        setInitializationError(null);
-    }
-    
+    const effectCallId = callId || 'unknown-call-id'; // Use for logging
+    logger.log('[UltravoxSessionManager] Main effect triggered.', { 
+      shouldConnect, 
+      joinUrlProvided: !!joinUrl, 
+      callIdProvided: !!callId, 
+      hasAttempted: hasAttemptedConnectionRef.current, 
+      isPerformingPreChecks: performingPreChecksRef.current 
+    });
 
-    // 1. Perform pre-checks
-    if (typeof window === 'undefined') {
-      console.error('[UltravoxSessionManager] Pre-check failed: window is undefined.');
-      onError(new Error('SDK Error: Critical pre-check failed (window undefined).'));
-      if (isMounted.current) {
-        setInitializationError('Critical pre-check failed: Browser environment not available.');
-        setIsConnectingState(false);
-      }
-      return;
-    }
-    if (!window.WebSocket) {
-      console.error('[UltravoxSessionManager] Pre-check failed: window.WebSocket is not available.');
-      onError(new Error('SDK Error: WebSocket not supported.'));
-      if (isMounted.current) {
-        setInitializationError('Browser feature missing: WebSocket not supported.');
-        setIsConnectingState(false);
-      }
-      return;
-    }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      console.error('[UltravoxSessionManager] Pre-check failed: navigator.mediaDevices.getUserMedia is not available.');
-      onError(new Error('SDK Error: MediaDevices API (getUserMedia) not supported.'));
-      if (isMounted.current) {
-        setInitializationError('Browser feature missing: MediaDevices API not supported.');
-        setIsConnectingState(false);
-      }
-      return;
-    }
-    console.log('[UltravoxSessionManager] Pre-checks passed.');
-
-    // Call the synchronous initializeSession first
-    // Ensure initializeSession is stable or correctly memoized in useUltravoxSession
-    initializeSession(); 
-    console.log('[UltravoxSessionManager] initializeSession called. sessionRef should be populated now or soon.');
-
-    const performConnect = async () => {
-      if (!joinUrl) {
-        console.warn('[UltravoxSessionManager] No joinUrl provided, skipping connection.');
-        if (isMounted.current) {
-            setIsConnectingState(false);
+    const performConnectionSequence = async () => {
+      if (!joinUrl || !callId) {
+        logger.warn('[UltravoxSessionManager] joinUrl or callId is missing. Cannot connect.');
+        if(shouldConnect) { // Only error if we actually intended to connect
+            callbacks.onError(new Error('Connection cannot proceed: joinUrl or callId is missing.'), 'PreCheck');
         }
         return;
       }
-      
-      // Set connecting true before async call, hook's isUltravoxConnecting will confirm
-      if (isMounted.current) {
-          setIsConnectingState(true); 
+
+      if (performingPreChecksRef.current) {
+        logger.log('[UltravoxSessionManager] Pre-checks or connection sequence already in progress. Aborting this run.');
+        return;
       }
+      performingPreChecksRef.current = true;
+      logger.log(`[UltravoxSessionManager] Starting connection sequence for callId: ${effectCallId}`);
+
       try {
-        console.log('[UltravoxSessionManager] Calling connect(joinUrl)...');
-        // `connect` is from the hook, ensure it's stable or correctly memoized
-        const connected = await connect(joinUrl); 
-        console.log('[UltravoxSessionManager] connect(joinUrl) completed. Result:', connected);
-        if (!connected && isMounted.current) {
-          // If connect returns false, it means joinCall wasn't invoked or failed early.
-          // The onError callback within the hook should have been called.
-          // If not, we might need to set an error here.
-          // For now, assume hook's onError is reliable.
-          // setInitializationError('Failed to initiate connection to Ultravox session.');
-          // setIsConnectingState(false); // Should be handled by onError or status change
+        // 1. Pre-flight checks
+        logger.log('[UltravoxSessionManager] Running pre-flight checks...');
+        const { compatible, issues } = checkBrowserCompatibility();
+        if (!compatible) {
+          throw new Error(`Browser incompatible: ${issues.join(', ')}`);
         }
-      } catch (error: any) {
-        console.error('[UltravoxSessionManager] Error during connect(joinUrl) call itself:', error);
-        if (isMounted.current) {
-          // This catch block handles errors from the connect() call itself,
-          // not from the async process within connect (which uses onError prop).
-          // However, a well-behaved connect() should propagate errors via its own onError.
-          onError(error); // Propagate error
-          setInitializationError(error.message || 'An unexpected error occurred during the connection attempt.');
-          setIsConnectingState(false);
+        logger.log('[UltravoxSessionManager] Browser compatibility: OK');
+
+        const micPerms = await checkMicrophonePermissions();
+        if (!micPerms.granted) {
+          throw new Error(micPerms.error || 'Microphone permission denied');
         }
+        logger.log('[UltravoxSessionManager] Microphone permissions: OK');
+
+        if (typeof WebSocket === 'undefined') {
+          throw new Error('WebSocket API not available in this browser');
+        }
+        logger.log('[UltravoxSessionManager] WebSocket API: OK');
+
+        // Optional: Test WebSocket connection (non-blocking for actual attempt)
+        const wsTestSuccess = await testWebSocketConnection(joinUrl);
+        if (wsTestSuccess) {
+          logger.log('[UltravoxSessionManager] Preliminary WebSocket test: Successful');
+        } else {
+          logger.warn('[UltravoxSessionManager] Preliminary WebSocket test: Failed. Connection will still be attempted.');
+        }
+        logger.log('[UltravoxSessionManager] All pre-flight checks completed.');
+
+        // 2. Initialize and Connect
+        // Mark that we are about to attempt the actual connection via the hook
+        // This ref ensures we don't try to connect multiple times if shouldConnect remains true
+        hasAttemptedConnectionRef.current = true; 
+        
+        await ultravoxSession.initializeSession();
+        logger.log('[UltravoxSessionManager] ultravoxSession.initializeSession() called.');
+        
+        await ultravoxSession.connect(joinUrl);
+        logger.log('[UltravoxSessionManager] ultravoxSession.connect() called.');
+        
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(`[UltravoxSessionManager] Error during connection sequence for callId ${effectCallId}: ${errorMessage}`, error);
+        callbacks.onError(error instanceof Error ? error : new Error(errorMessage), 'ConnectionSetup');
+        // If pre-checks or connection fails, allow for a new attempt if props change
+        hasAttemptedConnectionRef.current = false; 
+      } finally {
+        performingPreChecksRef.current = false;
+        logger.log(`[UltravoxSessionManager] Connection sequence finished for callId: ${effectCallId}. performingPreChecksRef set to false.`);
       }
-      // Final connection state (isConnectingState) should be managed by onStatusChange or onError callbacks from the hook
     };
 
-    performConnect();
-
-    return () => {
-      console.log('[UltravoxSessionManager] Cleanup: Component unmounting or deps changed. Current joinUrl:', joinUrl);
-      // Check if session exists using sessionRef before calling endSession
-      // `endSession` from the hook should be safe to call even if session is already null/disconnected
-      if (sessionRef.current) {
-         console.log('[UltravoxSessionManager] Active session found (sessionRef.current exists). Calling endSession() during cleanup.');
-         endSession?.(); 
+    if (shouldConnect && !hasAttemptedConnectionRef.current) {
+      if (!joinUrl || !callId) {
+        logger.warn('[UltravoxSessionManager] shouldConnect is true, but joinUrl or callId is missing. Waiting for valid props.');
+         if (performingPreChecksRef.current) performingPreChecksRef.current = false; // Reset if stuck
       } else {
-         console.log('[UltravoxSessionManager] No active session (sessionRef.current is null). Skipping endSession() during cleanup.');
+        performConnectionSequence();
       }
-      // No need to set isMounted.current to false here, that's handled by its own effect.
-      // Resetting component-specific state on unmount or dep change might be needed if not handled by hook.
-      // setIsConnectingState(false); // This might be too aggressive if deps change but component stays mounted for a reconnect.
-                                 // The hook's state (isUltravoxConnecting) is the source of truth.
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [joinUrl, callId, initializeSession, connect, endSession, sessionRef, onTranscriptUpdate, onStatusChange, onSessionEnd, onError]);
-
-  // Update local connecting state based on hook's connecting state
-  useEffect(() => {
-    if (isMounted.current) {
-        // Only update if different to avoid potential loops if not careful, though useState handles this.
-        if (isConnectingState !== isUltravoxConnecting) {
-            setIsConnectingState(isUltravoxConnecting);
-        }
+    } else if (!shouldConnect && hasAttemptedConnectionRef.current) {
+      logger.log(`[UltravoxSessionManager] shouldConnect is false and connection was active/attempted for callId ${effectCallId}. Ending session.`);
+      ultravoxSession.endSession();
+      hasAttemptedConnectionRef.current = false; // Reset, allowing re-connection if shouldConnect becomes true again.
+      if (performingPreChecksRef.current) performingPreChecksRef.current = false; // Reset if stuck
+    } else {
+      logger.log('[UltravoxSessionManager] No action taken by main effect (conditions not met or already handled).', { 
+         shouldConnect, hasAttempted: hasAttemptedConnectionRef.current, performingPreChecks: performingPreChecksRef.current 
+      });
+       if (performingPreChecksRef.current && !shouldConnect) { // Safety net: if prechecks were running but shouldConnect became false
+           performingPreChecksRef.current = false;
+           logger.warn('[UltravoxSessionManager] Reset performingPreChecksRef due to shouldConnect becoming false during prechecks.');
+       }
     }
-  }, [isUltravoxConnecting, isConnectingState]); // Added isConnectingState to dependencies for safety, though a bit redundant
+  // Key dependencies:
+  // - shouldConnect: Primary driver for starting/stopping.
+  // - joinUrl, callId: If these change, a new session might be needed. Resetting hasAttemptedConnectionRef when shouldConnect is false allows this.
+  // - ultravoxSession: Provides stable methods from the hook.
+  // - callbacks: The hook itself manages callback stability with propsRef.
+  }, [shouldConnect, joinUrl, callId, ultravoxSession, callbacks]);
 
-  if (initializationError) {
-    return (
-      <div style={{ padding: '20px', color: 'red', border: '1px solid red', margin: '10px' }}>
-        <p><strong>Ultravox Session Manager Error:</strong></p>
-        <p>{initializationError}</p>
-        <p>Status: {callStatus || 'N/A'}</p>
-      </div>
-    );
-  }
-  
-  // This component might render a loading indicator based on its own or the hook's connecting state
-  // Example:
-  // if (isConnectingState) { 
-  //   return <p>Loading Audio Session Manager... (Status: {callStatus || 'Initializing'})</p>;
-  // }
+  // Cleanup effect for component unmount
+  useEffect(() => {
+    return () => {
+      logger.log('[UltravoxSessionManager] Unmounting. Ensuring session is properly ended.');
+      ultravoxSession.endSession();
+      // Explicitly reset refs on unmount to clear state for any potential remounts.
+      hasAttemptedConnectionRef.current = false;
+      performingPreChecksRef.current = false;
+    };
+  }, [ultravoxSession]); // ultravoxSession object itself is stable
 
-  return null; // This component primarily manages the session, doesn't render UI itself beyond errors
-};
+  return (
+    <div style={{ display: 'none' }} data-testid="ultravox-manager">
+      Ultravox Manager Status: {props.shouldConnect ? 'Attempting/Connected' : 'Idle/Disconnected'} | CallID: {props.callId || 'N/A'}
+    </div>
+  );
+}
 
-export default UltravoxSessionManager;
+// Log creation/update and description
+console.log('Overwritten components/UltravoxSessionManager.tsx: Manages Ultravox session lifecycle, performs pre-connection checks, and integrates with useUltravoxSession hook. Includes refined logic for refs and connection sequence.');
