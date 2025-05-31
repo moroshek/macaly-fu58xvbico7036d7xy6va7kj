@@ -39,6 +39,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
   const prevJoinUrlRef = useRef<string | null>(null);
   const prevCallIdRef = useRef<string | null>(null);
   const lastUsedJoinUrlRef = useRef<string | null>(null); // Track URLs we've already tried
+  const activeConnectionUrlRef = useRef<string | null>(null); // Track currently connecting URL
 
   // Connection state management to prevent 4409 conflicts
   const isConnectionAllowed = useAppState(state => state.isConnectionAllowed);
@@ -71,6 +72,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
       hasAttemptedConnectionRef.current = false;
       hasEncounteredErrorRef.current = false;
       lastUsedJoinUrlRef.current = null; // Reset URL tracking for new context
+      activeConnectionUrlRef.current = null; // Reset active connection tracking
       // No need to reset performingSessionManagementRef here as it guards the async function itself.
       // Update prev refs to current values
       prevJoinUrlRef.current = joinUrl;
@@ -140,13 +142,27 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
           throw error;
         }
         
+        // Additional check: prevent connecting while already connecting to the same URL
+        if (activeConnectionUrlRef.current === joinUrl) {
+          logger.warn('[UltravoxSessionManager] Already connecting to this URL, skipping duplicate attempt');
+          return;
+        }
+        
         logger.log(`[UltravoxSessionManager] About to connect to joinUrl: ${joinUrl.substring(0, 50)}... for callId: ${effectCallIdLog}`);
         
-        // Mark this URL as used BEFORE attempting connection
-        lastUsedJoinUrlRef.current = joinUrl;
+        // Mark this URL as actively connecting
+        activeConnectionUrlRef.current = joinUrl;
         
-        await ultravoxSession.connect(joinUrl);
-        logger.log('[UltravoxSessionManager] ultravoxSession.connect() succeeded.');
+        try {
+          await ultravoxSession.connect(joinUrl);
+          logger.log('[UltravoxSessionManager] ultravoxSession.connect() succeeded.');
+          
+          // Mark this URL as used after successful connection
+          lastUsedJoinUrlRef.current = joinUrl;
+        } finally {
+          // Clear active connection tracking
+          activeConnectionUrlRef.current = null;
+        }
         
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -248,6 +264,7 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
       performingSessionManagementRef.current = false;
       hasEncounteredErrorRef.current = false;
       lastUsedJoinUrlRef.current = null; // Clear URL tracking on unmount
+      activeConnectionUrlRef.current = null; // Clear active connection tracking
       prevJoinUrlRef.current = null; // Clear previous context tracking
       prevCallIdRef.current = null;
       

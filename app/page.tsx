@@ -326,8 +326,9 @@ export default function HomePage() {
     );
   }, []);
 
-  // Memoize with ONLY essential props to prevent UI animation re-renders from causing remounts
-  const memoizedSessionManager = useMemo(() => (
+  // CRITICAL FIX: Always render the session manager to prevent remounting
+  // The manager will handle connection state internally based on props
+  const sessionManager = (
     <UltravoxSessionManager
       joinUrl={appJoinUrl}
       callId={appCallId}
@@ -338,19 +339,15 @@ export default function HomePage() {
       onError={handleManagerError}
       onExperimentalMessage={handleManagerExperimentalMessage}
     />
-  ), [
-    // ONLY session-critical props - callbacks are now stable with empty deps
-    appJoinUrl,
-    appCallId, 
-    shouldConnectUltravox
-    // Removed callback dependencies since they're now stable
-  ]);
+  );
 
 
   return (
     <>
-      {/* Session Manager - Isolated from UI re-renders */}
-      {memoizedSessionManager}
+      {/* Session Manager - Always rendered to prevent remounting */}
+      <div key="ultravox-session-manager-stable-container" style={{ display: 'none' }}>
+        {sessionManager}
+      </div>
       
       <div className="min-h-screen bg-white overflow-x-hidden">
         {/* Fixed Header */}
