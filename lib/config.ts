@@ -18,6 +18,14 @@ export interface AppConfig {
   ultravoxAgentId: string;
   ai2GeminiModelName: string;
   ai3HfEndpointUrl: string;
+  // Visibility and reconnection settings
+  sessionPersistenceTimeoutMs: number;
+  maxReconnectAttempts: number;
+  reconnectDelayMs: number;
+  reconnectBackoffMultiplier: number;
+  heartbeatIntervalMs: number;
+  heartbeatTimeoutMs: number;
+  enableAutoReconnect: boolean;
 }
 
 const defaultConfig: AppConfig = {
@@ -35,7 +43,15 @@ const defaultConfig: AppConfig = {
   geminiApiBaseUrl: "https://generativelanguage.googleapis.com/v1beta/models",
   ultravoxAgentId: process.env.NEXT_PUBLIC_ULTRAVOX_AGENT_ID || "fb42f359-003c-4875-b1a1-06c4c1c87376",
   ai2GeminiModelName: process.env.NEXT_PUBLIC_AI2_GEMINI_MODEL_NAME || "gemini-2.5-flash-preview-05-20",
-  ai3HfEndpointUrl: process.env.NEXT_PUBLIC_AI3_HF_ENDPOINT_URL || "https://vvgxd2ms1kn7p2sq.us-east4.gcp.endpoints.huggingface.cloud"
+  ai3HfEndpointUrl: process.env.NEXT_PUBLIC_AI3_HF_ENDPOINT_URL || "https://vvgxd2ms1kn7p2sq.us-east4.gcp.endpoints.huggingface.cloud",
+  // Visibility and reconnection settings
+  sessionPersistenceTimeoutMs: 60000, // 60 seconds
+  maxReconnectAttempts: 3,
+  reconnectDelayMs: 2000, // 2 seconds initial delay
+  reconnectBackoffMultiplier: 1.5, // Exponential backoff
+  heartbeatIntervalMs: 30000, // 30 seconds
+  heartbeatTimeoutMs: 5000, // 5 seconds timeout for heartbeat response
+  enableAutoReconnect: true
 };
 
 export function getConfig(): AppConfig {

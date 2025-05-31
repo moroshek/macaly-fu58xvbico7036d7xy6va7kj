@@ -995,7 +995,6 @@ export default function HomePage() {
               alt="BuildAI Logo" 
               className="w-24 h-24 object-contain mb-4"
             />
-            <span className="text-2xl font-bold text-gray-900 mb-2">BuildAI</span>
             <p className="text-gray-600 text-center max-w-md">Transforming healthcare through intelligent automation</p>
           </div>
           
@@ -1009,7 +1008,7 @@ export default function HomePage() {
               </div>
               
               <div className="text-sm text-gray-500 text-center md:text-right">
-                <span className="block">Jake Moroshek | BuildAI © 2025</span>
+                <span className="block">BuildAI © 2025</span>
                 <span className="block text-xs mt-1">Designed & Built by Jake Moroshek</span>
               </div>
             </div>

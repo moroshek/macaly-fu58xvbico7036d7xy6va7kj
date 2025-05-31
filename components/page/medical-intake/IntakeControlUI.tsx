@@ -5,6 +5,7 @@ import { Mic, X, Loader2, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { UIState, PULSING_ANIMATION_CONFIG, UI_STATES } from '@/lib/config';
 import { MicrophonePermissionResult, checkMicrophonePermissions } from '@/lib/browser-compat'; // Assuming this is the correct path and MicrophonePermissionResult is exported
+import FunLoadingAnimation from '@/components/FunLoadingAnimation';
 
 // Define InterviewPulsingAnimation directly in this file
 const InterviewPulsingAnimation = () => (
@@ -108,9 +109,7 @@ const IntakeControlUI: React.FC<IntakeControlUIProps> = ({
 
           {uiState === UI_STATES.INITIATING && (
             <div className="space-y-6">
-              <div className="w-24 h-24 mx-auto bg-teal-100 rounded-full flex items-center justify-center">
-                <Loader2 size={32} className="text-teal-500 animate-spin" />
-              </div>
+              <FunLoadingAnimation variant="transcript" />
               <p className="text-gray-500">Connecting to AI assistant...</p>
             </div>
           )}
@@ -134,15 +133,7 @@ const IntakeControlUI: React.FC<IntakeControlUIProps> = ({
 
           {uiState === UI_STATES.PROCESSING_TRANSCRIPT && (
             <div className="space-y-6">
-              <div className="w-24 h-24 mx-auto bg-blue-100 rounded-full flex items-center justify-center">
-                <Loader2 size={32} className="text-blue-500 animate-spin" />
-              </div>
-              <div className="space-y-2">
-                <p className="text-blue-600 font-medium">Processing Interview</p>
-                <p className="text-sm text-gray-500">
-                  Analyzing conversation and generating summary...
-                </p>
-              </div>
+              <FunLoadingAnimation variant="summary" />
             </div>
           )}
 
