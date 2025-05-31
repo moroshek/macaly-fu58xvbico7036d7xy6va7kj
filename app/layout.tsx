@@ -6,7 +6,7 @@ import StableClientWrapper from "./stable-client-wrapper";
 const inter = Inter({ subsets: ["latin"] }); // Font initialization
 
 export const metadata: Metadata = { // Original metadata
-  title: "MedIntake - AI-Powered Medical Intake Assistant",
+  title: "Med Intake - AI-Powered Medical Intake Assistant",
   description: "Expedite your medical intake process with our secure, HIPAA-compliant AI assistant.",
 };
 

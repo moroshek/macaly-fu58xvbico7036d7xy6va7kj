@@ -507,10 +507,10 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto px-8 flex justify-between items-center">
           <div className="flex items-center gap-3 cursor-pointer transition-transform hover:-translate-y-0.5">
             <div className="relative w-8 h-8 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center overflow-hidden">
-              <span className="text-white font-bold text-lg relative z-10">M</span>
+              <span className="text-white font-bold text-sm relative z-10">AI</span>
               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shine"></div>
             </div>
-            <span className="text-xl font-bold text-gray-900">Medintake</span>
+            <span className="text-xl font-bold text-gray-900">Med Intake</span>
           </div>
         </div>
       </header>
