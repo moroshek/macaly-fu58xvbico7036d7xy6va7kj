@@ -9,6 +9,15 @@ interface AnalysisResultsBoxProps {
 }
 
 const AnalysisResultsBox: React.FC<AnalysisResultsBoxProps> = ({ analysisData, isLoading }) => {
+  // Clean up analysis data by removing any Answer tags
+  const cleanAnalysisData = React.useMemo(() => {
+    if (!analysisData) return null;
+    
+    // Remove <Answer> or <answer> tags (case insensitive)
+    const cleaned = analysisData.replace(/<\/?answer>/gi, '').trim();
+    return cleaned;
+  }, [analysisData]);
+
   return (
     <div className="bg-white rounded-lg border border-teal-100 shadow-md overflow-hidden">
       <div className="bg-gradient-to-r from-blue-500 to-blue-600 py-3 px-4">
@@ -18,8 +27,8 @@ const AnalysisResultsBox: React.FC<AnalysisResultsBoxProps> = ({ analysisData, i
         {isLoading ? (
           <FunLoadingAnimation variant="analysis" />
         ) : (
-          analysisData && analysisData.trim() !== '' ? (
-            <p className="text-sm text-gray-700 whitespace-pre-line">{analysisData}</p>
+          cleanAnalysisData && cleanAnalysisData.trim() !== '' ? (
+            <p className="text-sm text-gray-700 whitespace-pre-line">{cleanAnalysisData}</p>
           ) : (
             <div className="text-gray-500 text-sm space-y-2 text-center">
               <p className="italic">No analysis available yet.</p>

@@ -94,8 +94,11 @@ const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
           ) : analysisData ? (
             <div className="text-sm text-gray-600 prose prose-sm max-w-none">
               {(() => {
+                // Clean up analysis data by removing any Answer tags
+                const cleanedData = analysisData.replace(/<\/?answer>/gi, '').trim();
+                
                 try {
-                  const parsed = JSON.parse(analysisData);
+                  const parsed = JSON.parse(cleanedData);
                   return (
                     <div className="space-y-3">
                       {parsed.differential && (
@@ -126,7 +129,7 @@ const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                   );
                 } catch (e) {
                   // If not JSON, display as formatted paragraphs
-                  return analysisData.split('\n').map((paragraph, index) => (
+                  return cleanedData.split('\n').map((paragraph, index) => (
                     <p key={index} className="mb-3 leading-relaxed">
                       {paragraph}
                     </p>

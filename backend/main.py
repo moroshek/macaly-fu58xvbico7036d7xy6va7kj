@@ -457,10 +457,23 @@ Begin your analysis now.
     return analysis_prompt
 
 def extract_answer_from_tags(text_with_tags: str, tag_name: str = "answer") -> str | None:
-    match = re.search(rf'<{tag_name}>(.*?)</{tag_name}>', text_with_tags, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
+    # Try multiple patterns to be more flexible
+    patterns = [
+        rf'<{tag_name}>(.*?)</{tag_name}>',  # Standard format
+        rf'<{tag_name}\s*>(.*?)</{tag_name}\s*>',  # With spaces
+        rf'<{tag_name.upper()}>(.*?)</{tag_name.upper()}>',  # Uppercase
+        rf'<{tag_name.capitalize()}>(.*?)</{tag_name.capitalize()}>',  # Capitalized
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_with_tags, re.DOTALL | re.IGNORECASE)
+        if match:
+            extracted = match.group(1).strip()
+            logger.debug(f"Successfully extracted content using pattern: {pattern}")
+            return extracted
+    
     logger.warning(f"Could not find <{tag_name}> tags in the provided text. Returning raw text.")
+    logger.debug(f"Text preview that failed tag extraction (first 100 chars): {text_with_tags[:100]}...")
     return text_with_tags # Return raw text if tags not found, as per original logic
 
 # --- API Endpoints (Content mostly unchanged, ensuring use of global API key VALUES) ---
@@ -589,6 +602,7 @@ async def submit_transcript(data: dict = Body(...)):
         logger.info(f"Calling AI #3 (Hugging Face Endpoint: {AI3_HF_ENDPOINT_URL_VALUE}) for Analysis...")
         ai3_raw_response = await call_hf_inference_api(prompt=ai3_prompt)
         logger.info("AI #3 (HF) response received.")
+        logger.debug(f"AI #3 raw response preview (first 200 chars): {ai3_raw_response[:200]}...")
         clinical_analysis_text = extract_answer_from_tags(ai3_raw_response, tag_name="answer")
         if clinical_analysis_text == ai3_raw_response and not ("<answer>" in ai3_raw_response and "</answer>" in ai3_raw_response) :
              logger.warning("AI #3 (HF) response did not contain <answer> tags as instructed. Using raw response.")

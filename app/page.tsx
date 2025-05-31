@@ -762,7 +762,9 @@ export default function HomePage() {
                 ) : analysisData ? (
                   <div className="animate-fade-in">
                     <div className="bg-white p-4 rounded-lg border-l-4 border-purple-500">
-                      <div className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{analysisData}</div>
+                      <div className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">
+                        {analysisData.replace(/<\/?answer>/gi, '').trim()}
+                      </div>
                     </div>
                   </div>
                 ) : (

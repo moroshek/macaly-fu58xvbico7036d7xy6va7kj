@@ -2,7 +2,7 @@
 
 import React from 'react';
 import FunLoadingAnimation from '@/components/FunLoadingAnimation';
-import { SummaryData } from '@/app/page'; // Assuming SummaryData is exported from app/page.tsx
+import { SummaryData } from '@/lib/types';
 
 interface SummaryResultsBoxProps {
   summaryData: SummaryData | null;
