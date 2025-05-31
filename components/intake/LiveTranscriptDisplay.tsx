@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect } from 'react';
-import { Utterance } from '@/app/page'; // Import the Utterance type from your page
+import { Utterance } from '@/lib/types';
 
 interface LiveTranscriptDisplayProps {
   transcript: Utterance[];
@@ -27,7 +27,7 @@ const LiveTranscriptDisplay: React.FC<LiveTranscriptDisplayProps> = ({ transcrip
   return (
     <div 
       ref={scrollRef}
-      className="bg-gray-50 border rounded-lg p-4 max-h-64 overflow-y-auto space-y-2"
+      className="bg-gray-50 border rounded-lg p-4 overflow-y-auto space-y-2 max-h-64 md:max-h-80 lg:max-h-96"
     >
       <h4 className="font-semibold text-gray-700 mb-2">Live Conversation:</h4>
       {transcript.map((item, index) => (
@@ -40,9 +40,9 @@ const LiveTranscriptDisplay: React.FC<LiveTranscriptDisplayProps> = ({ transcrip
           }`}
         >
           <span className="font-semibold">
-            {item.speaker === 'user' ? 'You' : 'AI Doctor'}:
+            {item.speaker === 'user' ? 'You' : 'AI Assistant'}:
           </span>
-          <span className="ml-2">{item.text}</span>
+          <span className="ml-2">{item.transcript}</span>
         </div>
       ))}
     </div>

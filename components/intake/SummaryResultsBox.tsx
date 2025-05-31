@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { Loader2 } from "lucide-react";
+import FunLoadingAnimation from '@/components/FunLoadingAnimation';
 import { SummaryData } from '@/app/page'; // Assuming SummaryData is exported from app/page.tsx
 
 interface SummaryResultsBoxProps {
@@ -16,11 +16,9 @@ const SummaryResultsBox: React.FC<SummaryResultsBoxProps> = ({ summaryData, isLo
       <div className="bg-gradient-to-r from-teal-500 to-teal-600 py-3 px-4">
         <h2 className="text-white text-lg font-medium">Medical Intake Summary</h2>
       </div>
-      <div className="p-4 space-y-4 min-h-[150px] max-h-[400px] overflow-y-auto">
+      <div className="p-4 space-y-4 min-h-[150px] max-h-[300px] md:max-h-[400px] lg:max-h-[500px] overflow-y-auto">
         {isLoading ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 size={24} className="text-teal-500 animate-spin" />
-          </div>
+          <FunLoadingAnimation variant="summary" />
         ) : (
           summaryData && Object.values(summaryData).some(value => value !== null && (typeof value === 'string' ? value.trim() !== '' : true)) ? (
             Object.entries(summaryData).map(([key, value]) => {
@@ -33,7 +31,12 @@ const SummaryResultsBox: React.FC<SummaryResultsBoxProps> = ({ summaryData, isLo
                 </div>
               );
             })
-          ) : (<p className="text-sm text-gray-500 italic text-center">No summary details reported.</p>)
+          ) : (
+            <div className="text-gray-500 text-sm space-y-2 text-center">
+              <p className="italic">No summary available yet.</p>
+              <p className="text-xs">Complete an interview to generate a structured medical summary.</p>
+            </div>
+          )
         )}
       </div>
     </div>
