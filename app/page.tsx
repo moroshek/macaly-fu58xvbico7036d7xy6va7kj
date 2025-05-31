@@ -220,7 +220,14 @@ export default function HomePage() {
       return; // Don't change state, let the component retry naturally
     }
     
-    setAppErrorMessage(`An error occurred${ctxMsg}: ${error.message}`);
+    // Check if this is a join URL reuse error (4409 conflict or similar)
+    if (error.message.includes('reuse') || error.message.includes('Conflict') || error.message.includes('4409')) {
+      logger.log('[Page] Detected join URL reuse error - will need fresh URL on retry');
+      setAppErrorMessage('Voice service conflict detected - this may be a temporary server-side issue. Please try again in a moment.');
+    } else {
+      setAppErrorMessage(`An error occurred${ctxMsg}: ${error.message}`);
+    }
+    
     setUiState('error');
     setShouldConnectUltravox(false);
   }, []);
@@ -344,9 +351,13 @@ export default function HomePage() {
 
 
   return (
-    <div className="min-h-screen bg-white overflow-x-hidden">
-      {/* Fixed Header */}
-      <header className={`fixed top-0 w-full z-50 transition-all duration-300 ${headerScrolled ? 'py-3 shadow-md' : 'py-4 shadow-sm'} bg-white/98 backdrop-blur-sm`}>
+    <>
+      {/* Session Manager - Isolated from UI re-renders */}
+      {memoizedSessionManager}
+      
+      <div className="min-h-screen bg-white overflow-x-hidden">
+        {/* Fixed Header */}
+        <header className={`fixed top-0 w-full z-50 transition-all duration-300 ${headerScrolled ? 'py-3 shadow-md' : 'py-4 shadow-sm'} bg-white/98 backdrop-blur-sm`}>
         <div className="max-w-6xl mx-auto px-8 flex justify-between items-center">
           <div className="flex items-center gap-3 cursor-pointer transition-transform hover:-translate-y-0.5">
             <div className="relative w-8 h-8 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center overflow-hidden">
@@ -741,19 +752,15 @@ export default function HomePage() {
         </div>
       </footer>
 
-      {/* Hidden session manager */}
-      <div className="hidden">
-        {memoizedSessionManager}
+        {/* Error Overlay */}
+        {uiState === 'error' && appErrorMessage && (
+          <ErrorOverlay 
+            message={appErrorMessage} 
+            onRetry={handleRetryFromError} 
+            onReset={handleFullReset} 
+          />
+        )}
       </div>
-
-      {/* Error Overlay */}
-      {uiState === 'error' && appErrorMessage && (
-        <ErrorOverlay 
-          message={appErrorMessage} 
-          onRetry={handleRetryFromError} 
-          onReset={handleFullReset} 
-        />
-      )}
-    </div>
+    </>
   );
 }

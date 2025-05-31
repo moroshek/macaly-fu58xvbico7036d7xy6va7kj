@@ -133,13 +133,18 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
           throw new Error('Connection aborted as shouldConnect turned false during initialization.');
         }
         
-        // Critical check: prevent reusing the same joinUrl
+        // Critical check: prevent reusing the same joinUrl (each URL can only be used once)
         if (lastUsedJoinUrlRef.current === joinUrl) {
-          throw new Error(`Attempting to reuse joinUrl that was already tried: ${joinUrl.substring(0, 30)}...`);
+          const error = new Error(`Join URL can only be used once. Already attempted: ${joinUrl.substring(0, 30)}... Please get a fresh URL from backend.`);
+          logger.error('[UltravoxSessionManager] 4409 Conflict Prevention:', error.message);
+          throw error;
         }
         
         logger.log(`[UltravoxSessionManager] About to connect to joinUrl: ${joinUrl.substring(0, 50)}... for callId: ${effectCallIdLog}`);
-        lastUsedJoinUrlRef.current = joinUrl; // Mark this URL as used
+        
+        // Mark this URL as used BEFORE attempting connection
+        lastUsedJoinUrlRef.current = joinUrl;
+        
         await ultravoxSession.connect(joinUrl);
         logger.log('[UltravoxSessionManager] ultravoxSession.connect() succeeded.');
         
