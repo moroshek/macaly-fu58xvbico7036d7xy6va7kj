@@ -187,7 +187,20 @@ export class BackendService {
       // Retry logic for 503 Service Unavailable (Cloud Run cold start)
       if (error.response?.status === 503 && retryCount < 3) {
         const delay = (retryCount + 1) * 2000; // 2s, 4s, 6s
-        console.log(`[BackendService] Got 503, retrying in ${delay}ms (attempt ${retryCount + 2}/4)...`);
+        console.log(`[BackendService] Got 503 (Service Unavailable), retrying in ${delay}ms (attempt ${retryCount + 2}/4)...`);
+        console.log(`[BackendService] 503 Error details:`, {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          headers: error.response?.headers,
+        });
+        
+        // Try to warm up the service before retry
+        try {
+          await this.checkHealth();
+        } catch (healthError) {
+          console.warn('[BackendService] Health check failed during retry:', healthError);
+        }
         
         await new Promise(resolve => setTimeout(resolve, delay));
         return this.submitTranscript(callId, transcript, retryCount + 1);

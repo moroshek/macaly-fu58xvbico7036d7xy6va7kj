@@ -62,7 +62,26 @@ export class ErrorHandler {
       }
 
       const status = error.response.status;
-      if (status >= 500) {
+      if (status === 503) {
+        // Service Unavailable - likely cold start or missing API keys
+        const errorData = error.response.data;
+        const detail = errorData?.detail || '';
+        
+        let userMessage = 'The processing service is temporarily unavailable. ';
+        if (detail.includes('AI#2') || detail.includes('AI#3')) {
+          userMessage += 'The AI service is not ready. Please try again in 10-15 seconds.';
+        } else {
+          userMessage += 'This is often due to the service warming up. Please try again in 10-15 seconds.';
+        }
+        
+        return new AppError(
+          `Service unavailable: ${detail || 'Unknown reason'}`,
+          'SERVICE_UNAVAILABLE',
+          'api',
+          true,
+          userMessage
+        );
+      } else if (status >= 500) {
         return new AppError(
           `Server error: ${status}`,
           'SERVER_ERROR',

@@ -164,15 +164,27 @@ export default function HomePage() {
         setUiState('completed');
         setIsProcessing(false);
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
-        logger.error('[Page] Failed to submit transcript:', errMsg, error);
+        logger.error('[Page] Failed to submit transcript:', error);
         
-        // Handle 503 Service Unavailable with a user-friendly message
-        if (errMsg.includes('503')) {
-          setAppErrorMessage('The processing service is temporarily unavailable. Please try again in a few moments.');
+        // Use the user message from AppError if available
+        let userMessage: string;
+        if (error && typeof error === 'object' && 'userMessage' in error && error.userMessage) {
+          userMessage = error.userMessage as string;
         } else {
-          setAppErrorMessage(`Processing failed: ${errMsg}`);
+          // Fallback to basic error handling
+          const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
+          if (errMsg.includes('503') || errMsg.includes('SERVICE_UNAVAILABLE')) {
+            userMessage = 'The processing service is temporarily unavailable. This is often due to the service warming up. Please try again in 10-15 seconds.';
+          } else if (errMsg.includes('timeout')) {
+            userMessage = 'The processing service took too long to respond. Please try again.';
+          } else if (errMsg.includes('network')) {
+            userMessage = 'Unable to connect to the processing service. Please check your internet connection and try again.';
+          } else {
+            userMessage = `Processing failed: ${errMsg}`;
+          }
         }
+        
+        setAppErrorMessage(userMessage);
         
         setUiState('error');
         setIsProcessing(false);
@@ -296,15 +308,27 @@ export default function HomePage() {
                 
                 setUiState('completed');
               } catch (error) {
-                const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
-                logger.error('[Page] Failed to submit transcript:', errMsg, error);
+                logger.error('[Page] Failed to submit transcript:', error);
                 
-                // Handle 503 Service Unavailable with a user-friendly message
-                if (errMsg.includes('503')) {
-                  setAppErrorMessage('The processing service is temporarily unavailable. Please try again in a few moments.');
+                // Use the user message from AppError if available
+                let userMessage: string;
+                if (error && typeof error === 'object' && 'userMessage' in error && error.userMessage) {
+                  userMessage = error.userMessage as string;
                 } else {
-                  setAppErrorMessage(`Processing failed: ${errMsg}`);
+                  // Fallback to basic error handling
+                  const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
+                  if (errMsg.includes('503') || errMsg.includes('SERVICE_UNAVAILABLE')) {
+                    userMessage = 'The processing service is temporarily unavailable. This is often due to the service warming up. Please try again in 10-15 seconds.';
+                  } else if (errMsg.includes('timeout')) {
+                    userMessage = 'The processing service took too long to respond. Please try again.';
+                  } else if (errMsg.includes('network')) {
+                    userMessage = 'Unable to connect to the processing service. Please check your internet connection and try again.';
+                  } else {
+                    userMessage = `Processing failed: ${errMsg}`;
+                  }
                 }
+                
+                setAppErrorMessage(userMessage);
                 
                 setUiState('error');
               }

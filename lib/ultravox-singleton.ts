@@ -19,6 +19,7 @@ class UltravoxSingleton {
   private currentCallId: string | null = null;
   private isConnecting: boolean = false;
   private callbacks: SessionCallbacks | null = null;
+  private lastLoggedTranscripts: Map<string, string> = new Map();
 
   private constructor() {}
 
@@ -140,13 +141,20 @@ class UltravoxSingleton {
           logger.debug('[UltravoxSingleton] Raw transcript item:', t);
         }
         
-        // Log final transcripts at normal level (not debug)
+        // Log final transcripts at normal level (not debug), but avoid duplicates
         if (t.isFinal) {
-          logger.log('[UltravoxSingleton] Final transcript:', {
-            speaker: t.speaker,
-            text: t.text,
-            isFinal: t.isFinal
-          });
+          const transcriptKey = `${t.speaker}:${t.text}`;
+          const lastLogged = this.lastLoggedTranscripts.get(t.speaker);
+          
+          // Only log if this is a new transcript for this speaker
+          if (lastLogged !== t.text) {
+            logger.log('[UltravoxSingleton] Final transcript:', {
+              speaker: t.speaker,
+              text: t.text,
+              isFinal: t.isFinal
+            });
+            this.lastLoggedTranscripts.set(t.speaker, t.text);
+          }
         }
         
         return {
@@ -187,6 +195,7 @@ class UltravoxSingleton {
     this.currentJoinUrl = null;
     this.currentCallId = null;
     this.isConnecting = false;
+    this.lastLoggedTranscripts.clear();
   }
 
   getStatus(): string {
