@@ -2,6 +2,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import Link from 'next/link';
 import { useAppState } from '@/store/useAppState';
 import { Utterance } from '@/lib/types';
 import { BackendService } from '@/lib/backend-service'; 
@@ -548,10 +549,11 @@ export default function HomePage() {
         <header className={`fixed top-0 w-full z-50 transition-all duration-300 ${headerScrolled ? 'py-3 shadow-md' : 'py-4 shadow-sm'} bg-white/98 backdrop-blur-sm`}>
         <div className="max-w-6xl mx-auto px-8 flex justify-between items-center">
           <div className="flex items-center gap-3 cursor-pointer transition-transform hover:-translate-y-0.5">
-            <div className="relative w-8 h-8 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center overflow-hidden">
-              <span className="text-white font-bold text-sm relative z-10">AI</span>
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shine"></div>
-            </div>
+            <img 
+              src="/BuildAI logo.png" 
+              alt="BuildAI Logo" 
+              className="w-8 h-8 object-contain"
+            />
             <span className="text-xl font-bold text-gray-900">Med Intake</span>
           </div>
         </div>
@@ -943,20 +945,23 @@ export default function HomePage() {
       <footer className="bg-gray-50 py-8 px-8">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-6 h-6 bg-gradient-to-br from-teal-400 to-teal-600 rounded-full flex items-center justify-center">
-              <span className="text-white font-bold text-sm">M</span>
-            </div>
+            <img 
+              src="/BuildAI logo.png" 
+              alt="BuildAI Logo" 
+              className="w-6 h-6 object-contain"
+            />
             <span className="font-semibold text-gray-900">Medintake</span>
           </div>
           
           <div className="flex gap-8 text-sm text-gray-600">
-            <a href="#" className="hover:text-teal-600 transition-colors">Privacy</a>
-            <a href="#" className="hover:text-teal-600 transition-colors">Security</a>
+            <Link href="/privacy" className="hover:text-teal-600 transition-colors">Privacy</Link>
+            <Link href="/security" className="hover:text-teal-600 transition-colors">Security</Link>
             <a href="#" className="hover:text-teal-600 transition-colors">Contact</a>
           </div>
           
           <div className="text-sm text-gray-500">
-            Jake Mccusker | BuildAI © 2025
+            <span>Jake Moroshek | BuildAI © 2025</span>
+            <span className="block md:inline md:ml-4 text-xs mt-1 md:mt-0">Designed & Built by Jake Moroshek</span>
           </div>
         </div>
       </footer>
