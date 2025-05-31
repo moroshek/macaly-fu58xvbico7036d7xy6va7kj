@@ -60,9 +60,13 @@
   100% { width: 100%; }
 }
 
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
 .animate-spin-slow {
-  animation: spin 3s ease-in-out infinite;
-  box-shadow: 0 0 15px rgba(20, 184, 166, 0.3);
+  animation: spin 3s linear infinite;
 }
 
 .animate-progress-bar {

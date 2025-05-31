@@ -9,6 +9,7 @@ import { ErrorOverlay } from '@/components/ErrorOverlay';
 import { useUltravoxSingleton } from '@/hooks/useUltravoxSingleton';
 import { logger } from '@/lib/logger';
 import { getConfig } from '@/lib/config';
+import FunLoadingAnimation from '@/components/FunLoadingAnimation';
 
 export default function HomePage() {
   // State from Zustand store
@@ -595,7 +596,7 @@ export default function HomePage() {
         </div>
 
         {/* Demo Interface */}
-        <div className={`bg-gray-50 rounded-2xl overflow-hidden shadow-2xl transition-all duration-1000 delay-300 relative ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+        <div className={`bg-gray-50 rounded-2xl overflow-hidden shadow-2xl transition-all duration-1000 delay-300 relative max-w-5xl mx-auto ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
           {/* Animated top border */}
           <div className="h-1 bg-gradient-to-r from-teal-500 via-teal-600 to-teal-500 bg-size-200 animate-gradient-move"></div>
           
@@ -611,7 +612,7 @@ export default function HomePage() {
           </div>
 
           {/* Three separate sections in a grid */}
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid md:grid-cols-3 gap-6 p-6">
             {/* Box 1: Audio Interview Control */}
             <div className="bg-white p-6 rounded-lg border border-gray-100">
               <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-6 flex items-center gap-2">
@@ -712,28 +713,31 @@ export default function HomePage() {
             </div>
 
             {/* Box 2: Intake Summary */}
-            <div className="bg-white p-6 rounded-lg border border-gray-100">
+            <div className="bg-white p-6 rounded-lg border border-gray-100 transition-all duration-500 hover:shadow-lg">
               <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-6 flex items-center gap-2">
                 <div className="w-1 h-4 bg-blue-500 rounded-full"></div>
                 Intake Summary
               </h4>
               
-              <div className="bg-gray-50 rounded-lg p-4 min-h-[300px] relative overflow-hidden">
+              <div className="bg-gray-50 rounded-lg p-4 min-h-[300px] max-h-[400px] relative overflow-y-auto">
                 {isProcessing ? (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="flex gap-2">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
-                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                    </div>
-                  </div>
+                  <FunLoadingAnimation variant="summary" />
                 ) : summaryData ? (
-                  <div className="animate-fade-in">
-                    <div className="bg-blue-50 p-4 rounded-lg">
-                      <pre className="text-xs text-gray-700 font-mono overflow-auto whitespace-pre-wrap">
-                        {JSON.stringify(summaryData, null, 2)}
-                      </pre>
-                    </div>
+                  <div className="space-y-3">
+                    {Object.entries(summaryData).map(([key, value], index) => {
+                      if (!value || (typeof value === 'string' && value.trim() === '')) return null;
+                      const formattedKey = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+                      return (
+                        <div 
+                          key={key} 
+                          className="border-b border-gray-200 pb-3 last:border-0 last:pb-0 animate-fade-in"
+                          style={{ animationDelay: `${index * 100}ms` }}
+                        >
+                          <h5 className="text-sm font-semibold text-blue-700 mb-1">{formattedKey}</h5>
+                          <p className="text-sm text-gray-700">{Array.isArray(value) ? value.join(', ') : value}</p>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="text-gray-500 text-center text-xs py-12 leading-relaxed">
@@ -744,21 +748,15 @@ export default function HomePage() {
             </div>
 
             {/* Box 3: Clinical Analysis */}
-            <div className="bg-white p-6 rounded-lg border border-gray-100">
+            <div className="bg-white p-6 rounded-lg border border-gray-100 transition-all duration-500 hover:shadow-lg">
               <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-6 flex items-center gap-2">
                 <div className="w-1 h-4 bg-purple-500 rounded-full"></div>
                 Clinical Analysis
               </h4>
               
-              <div className="bg-gray-50 rounded-lg p-4 min-h-[300px] relative overflow-hidden">
+              <div className="bg-gray-50 rounded-lg p-4 min-h-[300px] max-h-[400px] relative overflow-y-auto">
                 {isProcessing ? (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="flex gap-2">
-                      <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce"></div>
-                      <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                      <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                    </div>
-                  </div>
+                  <FunLoadingAnimation variant="analysis" />
                 ) : analysisData ? (
                   <div className="animate-fade-in">
                     <div className="bg-white p-4 rounded-lg border-l-4 border-purple-500">
