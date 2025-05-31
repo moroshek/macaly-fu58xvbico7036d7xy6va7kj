@@ -11,6 +11,7 @@ import { useUltravoxSingleton } from '@/hooks/useUltravoxSingleton';
 import { logger } from '@/lib/logger';
 import { getConfig } from '@/lib/config';
 import FunLoadingAnimation from '@/components/FunLoadingAnimation';
+import { transcriptPersistence } from '@/lib/transcript-persistence';
 
 export default function HomePage() {
   // State from Zustand store
@@ -34,6 +35,8 @@ export default function HomePage() {
   const [analysisData, setAnalysisData] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isManualEnd, setIsManualEnd] = useState(false);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const [maxRetryAttempts, setMaxRetryAttempts] = useState(0);
 
   useEffect(() => {
     logger.log('[Page] Component Mounted.');
@@ -108,6 +111,83 @@ export default function HomePage() {
     }
   }, [setUiState, setAppErrorMessage, setCurrentTranscript, setAppCallId, setAppJoinUrl]);
 
+  const submitTranscriptWithRetry = useCallback(async (
+    callId: string,
+    transcriptText: string,
+    transcript: Utterance[]
+  ) => {
+    try {
+      // Save transcript to localStorage before submission
+      transcriptPersistence.saveTranscript(callId, transcript, transcriptText);
+      
+      const response = await BackendService.getInstance().submitTranscript(
+        callId, 
+        transcriptText,
+        0,
+        (attempt, totalAttempts) => {
+          setRetryAttempt(attempt);
+          setMaxRetryAttempts(totalAttempts);
+          logger.log(`[Page] Retry progress: ${attempt}/${totalAttempts}`);
+        }
+      );
+      
+      // Clear retry state on success
+      setRetryAttempt(0);
+      setMaxRetryAttempts(0);
+      
+      // Clear persisted transcript on success
+      transcriptPersistence.clearTranscript();
+      
+      if (response.summary) {
+        setSummaryData(response.summary);
+        logger.log('[Page] Summary received:', response.summary);
+      }
+      
+      if (response.analysis) {
+        logger.log('[Page] Analysis received - Debug info:', {
+          analysisType: typeof response.analysis,
+          analysisLength: response.analysis.length,
+          analysisPreview: response.analysis.substring(0, 100) + '...',
+          analysisFullContent: response.analysis,
+          responseKeys: Object.keys(response)
+        });
+        setAnalysisData(response.analysis);
+        logger.log('[Page] Analysis received:', response.analysis);
+      }
+      
+      setUiState('completed');
+      setIsProcessing(false);
+    } catch (error) {
+      logger.error('[Page] Failed to submit transcript:', error);
+      
+      // Clear retry state on error
+      setRetryAttempt(0);
+      setMaxRetryAttempts(0);
+      
+      // Use the user message from AppError if available
+      let userMessage: string;
+      if (error && typeof error === 'object' && 'userMessage' in error && error.userMessage) {
+        userMessage = error.userMessage as string;
+      } else {
+        // Fallback to basic error handling
+        const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
+        if (errMsg.includes('503') || errMsg.includes('SERVICE_UNAVAILABLE')) {
+          userMessage = 'The processing service is warming up. Your transcript has been saved and will be processed automatically. Please wait a moment.';
+        } else if (errMsg.includes('timeout')) {
+          userMessage = 'The processing service took too long to respond. Your transcript has been saved. Please try again.';
+        } else if (errMsg.includes('network')) {
+          userMessage = 'Unable to connect to the processing service. Your transcript has been saved. Please check your internet connection and try again.';
+        } else {
+          userMessage = `Processing failed: ${errMsg}. Your transcript has been saved.`;
+        }
+      }
+      
+      setAppErrorMessage(userMessage);
+      setUiState('error');
+      setIsProcessing(false);
+    }
+  }, [setSummaryData, setAnalysisData, setUiState, setAppErrorMessage]);
+
   const handleEndInterviewClick = useCallback(async () => {
     logger.log('[Page] End Interview button clicked.');
     
@@ -126,87 +206,35 @@ export default function HomePage() {
 
     // Submit transcript to backend
     if (currentTranscript.length > 0 && appCallId) {
-      try {
-        // Filter out empty transcripts and format properly
-        const transcriptText = currentTranscript
-          .filter(utt => utt.transcript && utt.transcript.trim())
-          .map(utt => {
-            const speakerLabel = utt.speaker === 'agent' ? 'AI Assistant' : 'Patient';
-            return `${speakerLabel}: ${utt.transcript.trim()}`;
-          })
-          .join('\n');
-        
-        logger.log('[Page] Manual end - transcript before filtering:', {
-          rawTranscript: currentTranscript,
-          rawLength: currentTranscript.length
-        });
-        
-        if (!transcriptText || transcriptText.trim().length === 0) {
-          logger.warn('[Page] No valid transcript content to submit after filtering.');
-          setUiState('idle');
-          setIsProcessing(false);
-          return;
-        }
-        
-        logger.log('[Page] Submitting transcript to backend...', {
-          callId: appCallId,
-          transcriptLength: transcriptText.length,
-          utteranceCount: currentTranscript.length,
-          sampleText: transcriptText.substring(0, 100) + '...'
-        });
-        const response = await BackendService.getInstance().submitTranscript(appCallId, transcriptText);
-        
-        if (response.summary) {
-          setSummaryData(response.summary);
-          logger.log('[Page] Summary received:', response.summary);
-        }
-        
-        if (response.analysis) {
-          logger.log('[Page] Analysis received - Debug info:', {
-            analysisType: typeof response.analysis,
-            analysisLength: response.analysis.length,
-            analysisPreview: response.analysis.substring(0, 100) + '...',
-            analysisFullContent: response.analysis,
-            responseKeys: Object.keys(response)
-          });
-          setAnalysisData(response.analysis);
-          logger.log('[Page] Analysis received:', response.analysis);
-        }
-        
-        setUiState('completed');
+      // Filter out empty transcripts and format properly
+      const transcriptText = transcriptPersistence.formatTranscriptText(currentTranscript);
+      
+      logger.log('[Page] Manual end - transcript before filtering:', {
+        rawTranscript: currentTranscript,
+        rawLength: currentTranscript.length
+      });
+      
+      if (!transcriptText || transcriptText.trim().length === 0) {
+        logger.warn('[Page] No valid transcript content to submit after filtering.');
+        setUiState('idle');
         setIsProcessing(false);
-      } catch (error) {
-        logger.error('[Page] Failed to submit transcript:', error);
-        
-        // Use the user message from AppError if available
-        let userMessage: string;
-        if (error && typeof error === 'object' && 'userMessage' in error && error.userMessage) {
-          userMessage = error.userMessage as string;
-        } else {
-          // Fallback to basic error handling
-          const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
-          if (errMsg.includes('503') || errMsg.includes('SERVICE_UNAVAILABLE')) {
-            userMessage = 'The processing service is temporarily unavailable. This is often due to the service warming up. Please try again in 10-15 seconds.';
-          } else if (errMsg.includes('timeout')) {
-            userMessage = 'The processing service took too long to respond. Please try again.';
-          } else if (errMsg.includes('network')) {
-            userMessage = 'Unable to connect to the processing service. Please check your internet connection and try again.';
-          } else {
-            userMessage = `Processing failed: ${errMsg}`;
-          }
-        }
-        
-        setAppErrorMessage(userMessage);
-        
-        setUiState('error');
-        setIsProcessing(false);
+        return;
       }
+      
+      logger.log('[Page] Submitting transcript to backend...', {
+        callId: appCallId,
+        transcriptLength: transcriptText.length,
+        utteranceCount: currentTranscript.length,
+        sampleText: transcriptText.substring(0, 100) + '...'
+      });
+      
+      await submitTranscriptWithRetry(appCallId, transcriptText, currentTranscript);
     } else {
       logger.warn('[Page] No transcript to submit or missing call ID.');
       setUiState('idle');
       setIsProcessing(false);
     }
-  }, [currentTranscript, appCallId, setShouldConnectUltravox, setUiState, setAppErrorMessage]);
+  }, [currentTranscript, appCallId, setShouldConnectUltravox, setUiState, submitTranscriptWithRetry]);
 
   const handleManagerStatusChange = useCallback((status: string, details?: any) => {
     // Use refs to get current values to avoid stale closure
@@ -279,74 +307,33 @@ export default function HomePage() {
           
           if (transcript.length > 0 && callId) {
             setUiState('processing');
+            setIsProcessing(true);
             
             // Process transcript asynchronously
             (async () => {
-              try {
-                // Filter out empty transcripts and format properly
-                const transcriptText = transcript
-                  .filter(utt => utt.transcript && utt.transcript.trim())
-                  .map(utt => {
-                    const speakerLabel = utt.speaker === 'agent' ? 'AI Assistant' : 'Patient';
-                    return `${speakerLabel}: ${utt.transcript.trim()}`;
-                  })
-                  .join('\n');
-                
-                logger.log('[Page] Transcript before filtering:', {
-                  rawTranscript: transcript,
-                  rawLength: transcript.length
-                });
-                
-                if (!transcriptText || transcriptText.trim().length === 0) {
-                  logger.warn('[Page] No valid transcript content to submit after filtering.');
-                  setUiState('completed');
-                  return;
-                }
-                
-                logger.log('[Page] Submitting transcript to backend...', {
-                  callId,
-                  transcriptLength: transcriptText.length,
-                  utteranceCount: transcript.length,
-                  sampleText: transcriptText.substring(0, 100) + '...'
-                });
-                const response = await BackendService.getInstance().submitTranscript(callId, transcriptText);
-                
-                if (response.summary) {
-                  setSummaryData(response.summary);
-                  logger.log('[Page] Summary received:', response.summary);
-                }
-                
-                if (response.analysis) {
-                  setAnalysisData(response.analysis);
-                  logger.log('[Page] Analysis received:', response.analysis);
-                }
-                
+              // Filter out empty transcripts and format properly
+              const transcriptText = transcriptPersistence.formatTranscriptText(transcript);
+              
+              logger.log('[Page] Transcript before filtering:', {
+                rawTranscript: transcript,
+                rawLength: transcript.length
+              });
+              
+              if (!transcriptText || transcriptText.trim().length === 0) {
+                logger.warn('[Page] No valid transcript content to submit after filtering.');
                 setUiState('completed');
-              } catch (error) {
-                logger.error('[Page] Failed to submit transcript:', error);
-                
-                // Use the user message from AppError if available
-                let userMessage: string;
-                if (error && typeof error === 'object' && 'userMessage' in error && error.userMessage) {
-                  userMessage = error.userMessage as string;
-                } else {
-                  // Fallback to basic error handling
-                  const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
-                  if (errMsg.includes('503') || errMsg.includes('SERVICE_UNAVAILABLE')) {
-                    userMessage = 'The processing service is temporarily unavailable. This is often due to the service warming up. Please try again in 10-15 seconds.';
-                  } else if (errMsg.includes('timeout')) {
-                    userMessage = 'The processing service took too long to respond. Please try again.';
-                  } else if (errMsg.includes('network')) {
-                    userMessage = 'Unable to connect to the processing service. Please check your internet connection and try again.';
-                  } else {
-                    userMessage = `Processing failed: ${errMsg}`;
-                  }
-                }
-                
-                setAppErrorMessage(userMessage);
-                
-                setUiState('error');
+                setIsProcessing(false);
+                return;
               }
+              
+              logger.log('[Page] Submitting transcript to backend...', {
+                callId,
+                transcriptLength: transcriptText.length,
+                utteranceCount: transcript.length,
+                sampleText: transcriptText.substring(0, 100) + '...'
+              });
+              
+              await submitTranscriptWithRetry(callId, transcriptText, transcript);
             })();
           } else {
             logger.warn('[Page] No transcript to submit or missing call ID.');
@@ -361,7 +348,7 @@ export default function HomePage() {
         setShouldConnectUltravox(false);
         break;
     }
-  }, [setSummaryData, setAnalysisData, isManualEnd]); // Only add the data setters that are used in async operations
+  }, [isManualEnd, submitTranscriptWithRetry]); // Add submitTranscriptWithRetry to dependencies
 
   const handleManagerTranscriptUpdate = useCallback((transcripts: Utterance[]) => {
     const config = getConfig();
@@ -433,47 +420,76 @@ export default function HomePage() {
   }, []); // Remove ALL dependencies
 
   const handleRetryFromError = useCallback(async () => {
-    logger.log('[Page] Retry button clicked from error state - forcing new call creation.');
+    logger.log('[Page] Retry button clicked from error state.');
     
-    // Clear all state completely
-    setAppErrorMessage(null);
-    setAppCallId(null); 
-    setAppJoinUrl(null);
-    setCurrentTranscript([]);
-    setUvClientStatus('disconnected');
-    setShouldConnectUltravox(false); 
-    setSummaryData(null);
-    setAnalysisData(null);
+    // Check if we have a saved transcript we can retry with
+    const savedTranscript = transcriptPersistence.getTranscript();
     
-    // Start fresh interview with new call creation
-    setUiState('fetchingCallDetails');
-    
-    try {
-      const details = await BackendService.getInstance().initiateIntake();
-      if (details && details.callId && details.joinUrl) {
-        logger.log('[Page] NEW Call details fetched for retry:', { 
-          callId: details.callId, 
-          joinUrlPreview: details.joinUrl.substring(0, 50) + '...',
-          timestamp: new Date().toISOString(),
-          action: 'RETRY_AFTER_ERROR'
-        });
-        setAppCallId(details.callId);
-        setAppJoinUrl(details.joinUrl);
-        setShouldConnectUltravox(true);
-        setUiState('connecting'); 
-      } else {
-        throw new Error('Incomplete call details received from backend on retry.');
-      }
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : 'Unknown error during retry call setup.';
-      logger.error('[Page] Failed to initiate intake on retry:', errMsg, error);
-      setAppErrorMessage(`Retry failed: ${errMsg}`);
-      setUiState('error');
-      setShouldConnectUltravox(false);
-      setAppCallId(null);
+    if (savedTranscript && savedTranscript.callId && savedTranscript.transcript.length > 0) {
+      logger.log('[Page] Found saved transcript, retrying submission...', {
+        callId: savedTranscript.callId,
+        utteranceCount: savedTranscript.transcript.length
+      });
+      
+      // Clear error and show processing
+      setAppErrorMessage(null);
+      setUiState('processing');
+      setIsProcessing(true);
+      
+      // Format transcript text
+      const transcriptText = savedTranscript.transcriptText || 
+        transcriptPersistence.formatTranscriptText(savedTranscript.transcript);
+      
+      // Retry submission with saved transcript
+      await submitTranscriptWithRetry(
+        savedTranscript.callId, 
+        transcriptText, 
+        savedTranscript.transcript
+      );
+    } else {
+      // No saved transcript, start fresh interview
+      logger.log('[Page] No saved transcript, starting new interview.');
+      
+      // Clear all state completely
+      setAppErrorMessage(null);
+      setAppCallId(null); 
       setAppJoinUrl(null);
+      setCurrentTranscript([]);
+      setUvClientStatus('disconnected');
+      setShouldConnectUltravox(false); 
+      setSummaryData(null);
+      setAnalysisData(null);
+      
+      // Start fresh interview with new call creation
+      setUiState('fetchingCallDetails');
+      
+      try {
+        const details = await BackendService.getInstance().initiateIntake();
+        if (details && details.callId && details.joinUrl) {
+          logger.log('[Page] NEW Call details fetched for retry:', { 
+            callId: details.callId, 
+            joinUrlPreview: details.joinUrl.substring(0, 50) + '...',
+            timestamp: new Date().toISOString(),
+            action: 'RETRY_AFTER_ERROR'
+          });
+          setAppCallId(details.callId);
+          setAppJoinUrl(details.joinUrl);
+          setShouldConnectUltravox(true);
+          setUiState('connecting'); 
+        } else {
+          throw new Error('Incomplete call details received from backend on retry.');
+        }
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : 'Unknown error during retry call setup.';
+        logger.error('[Page] Failed to initiate intake on retry:', errMsg, error);
+        setAppErrorMessage(`Retry failed: ${errMsg}`);
+        setUiState('error');
+        setShouldConnectUltravox(false);
+        setAppCallId(null);
+        setAppJoinUrl(null);
+      }
     }
-  }, [setUiState, setAppErrorMessage, setCurrentTranscript, setAppCallId, setAppJoinUrl]);
+  }, [setUiState, setAppErrorMessage, setCurrentTranscript, setAppCallId, setAppJoinUrl, submitTranscriptWithRetry]);
 
   const handleFullReset = useCallback(() => {
     logger.log('[Page] Full Reset button clicked.');
@@ -549,11 +565,10 @@ export default function HomePage() {
         <header className={`fixed top-0 w-full z-50 transition-all duration-300 ${headerScrolled ? 'py-3 shadow-md' : 'py-4 shadow-sm'} bg-white/98 backdrop-blur-sm`}>
         <div className="max-w-6xl mx-auto px-8 flex justify-between items-center">
           <div className="flex items-center gap-3 cursor-pointer transition-transform hover:-translate-y-0.5">
-            <img 
-              src="/BuildAI logo.png" 
-              alt="BuildAI Logo" 
-              className="w-8 h-8 object-contain"
-            />
+            <div className="relative w-10 h-10 bg-gradient-to-br from-blue-400 to-teal-500 rounded-full flex items-center justify-center overflow-hidden shadow-lg">
+              <span className="text-white font-bold text-sm relative z-10">AI</span>
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer"></div>
+            </div>
             <span className="text-xl font-bold text-gray-900">Med Intake</span>
           </div>
         </div>
@@ -731,7 +746,22 @@ export default function HomePage() {
               
               <div className="bg-gray-50 rounded-lg p-4 min-h-[300px] max-h-[400px] relative overflow-y-auto">
                 {isProcessing ? (
-                  <FunLoadingAnimation variant="summary" />
+                  <div>
+                    <FunLoadingAnimation variant="summary" />
+                    {retryAttempt > 0 && (
+                      <div className="mt-4 text-center">
+                        <p className="text-xs text-gray-600">
+                          Server is warming up... Retry {retryAttempt}/{maxRetryAttempts}
+                        </p>
+                        <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
+                          <div 
+                            className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
+                            style={{ width: `${(retryAttempt / maxRetryAttempts) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : summaryData ? (
                   <div className="space-y-3">
                     {Object.entries(summaryData).map(([key, value], index) => {
@@ -766,7 +796,22 @@ export default function HomePage() {
               
               <div className="bg-gray-50 rounded-lg p-4 min-h-[300px] max-h-[400px] relative overflow-y-auto">
                 {isProcessing ? (
-                  <FunLoadingAnimation variant="analysis" />
+                  <div>
+                    <FunLoadingAnimation variant="analysis" />
+                    {retryAttempt > 0 && (
+                      <div className="mt-4 text-center">
+                        <p className="text-xs text-gray-600">
+                          Server is warming up... Retry {retryAttempt}/{maxRetryAttempts}
+                        </p>
+                        <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
+                          <div 
+                            className="bg-purple-500 h-1.5 rounded-full transition-all duration-300"
+                            style={{ width: `${(retryAttempt / maxRetryAttempts) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : analysisData ? (
                   <div className="animate-fade-in">
                     <div className="bg-white p-4 rounded-lg border-l-4 border-purple-500">
@@ -942,26 +987,32 @@ export default function HomePage() {
       </section>
 
       {/* Footer */}
-      <footer className="bg-gray-50 py-8 px-8">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
+      <footer className="bg-gray-50 py-16 px-8">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col items-center mb-8">
             <img 
               src="/BuildAI logo.png" 
               alt="BuildAI Logo" 
-              className="w-6 h-6 object-contain"
+              className="w-24 h-24 object-contain mb-4"
             />
-            <span className="font-semibold text-gray-900">Medintake</span>
+            <span className="text-2xl font-bold text-gray-900 mb-2">BuildAI</span>
+            <p className="text-gray-600 text-center max-w-md">Transforming healthcare through intelligent automation</p>
           </div>
           
-          <div className="flex gap-8 text-sm text-gray-600">
-            <Link href="/privacy" className="hover:text-teal-600 transition-colors">Privacy</Link>
-            <Link href="/security" className="hover:text-teal-600 transition-colors">Security</Link>
-            <a href="#" className="hover:text-teal-600 transition-colors">Contact</a>
-          </div>
-          
-          <div className="text-sm text-gray-500">
-            <span>Jake Moroshek | BuildAI © 2025</span>
-            <span className="block md:inline md:ml-4 text-xs mt-1 md:mt-0">Designed & Built by Jake Moroshek</span>
+          <div className="border-t border-gray-200 pt-8 mt-8">
+            <div className="flex flex-col md:flex-row justify-between items-center gap-6">
+              <div className="flex gap-8 text-sm text-gray-600">
+                <Link href="/" className="hover:text-teal-600 transition-colors">Home</Link>
+                <Link href="/privacy" className="hover:text-teal-600 transition-colors">Privacy</Link>
+                <Link href="/security" className="hover:text-teal-600 transition-colors">Security</Link>
+                <a href="#" className="hover:text-teal-600 transition-colors">Contact</a>
+              </div>
+              
+              <div className="text-sm text-gray-500 text-center md:text-right">
+                <span className="block">Jake Moroshek | BuildAI © 2025</span>
+                <span className="block text-xs mt-1">Designed & Built by Jake Moroshek</span>
+              </div>
+            </div>
           </div>
         </div>
       </footer>
@@ -971,7 +1022,8 @@ export default function HomePage() {
           <ErrorOverlay 
             message={appErrorMessage} 
             onRetry={handleRetryFromError} 
-            onReset={handleFullReset} 
+            onReset={handleFullReset}
+            hasTranscriptSaved={!!transcriptPersistence.getTranscript()}
           />
         )}
     </div>

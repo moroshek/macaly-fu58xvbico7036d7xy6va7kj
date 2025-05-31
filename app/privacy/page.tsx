@@ -24,11 +24,10 @@ export default function PrivacyPolicyPage() {
       <header className={`fixed top-0 w-full z-50 transition-all duration-300 ${headerScrolled ? 'py-3 shadow-md' : 'py-4 shadow-sm'} bg-white/98 backdrop-blur-sm`}>
         <div className="max-w-6xl mx-auto px-8 flex justify-between items-center">
           <Link href="/" className="flex items-center gap-3 transition-transform hover:-translate-y-0.5">
-            <img 
-              src="/BuildAI logo.png" 
-              alt="BuildAI Logo" 
-              className="w-8 h-8 object-contain"
-            />
+            <div className="relative w-10 h-10 bg-gradient-to-br from-blue-400 to-teal-500 rounded-full flex items-center justify-center overflow-hidden shadow-lg">
+              <span className="text-white font-bold text-sm relative z-10">AI</span>
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer"></div>
+            </div>
             <span className="text-xl font-bold text-gray-900">Med Intake</span>
           </Link>
           <nav className="flex gap-6 text-sm text-gray-600">

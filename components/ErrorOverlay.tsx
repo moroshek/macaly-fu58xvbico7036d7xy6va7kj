@@ -7,6 +7,7 @@ interface ErrorOverlayProps {
   message: string;
   onRetry: () => void;
   onReset?: () => void; // Optional reset handler
+  hasTranscriptSaved?: boolean; // Indicates if a transcript is saved and can be retried
 }
 
 export function ErrorOverlay(props: ErrorOverlayProps) {
@@ -75,9 +76,14 @@ export function ErrorOverlay(props: ErrorOverlayProps) {
       <div style={contentStyle}>
         <h2 style={titleStyle}>Application Error</h2>
         <p style={messageStyle} data-testid="error-message">{props.message}</p>
+        {props.hasTranscriptSaved && (
+          <p style={{ margin: '10px 0', color: '#27AE60', fontSize: '0.9em' }}>
+            ✓ Your transcript has been saved and will be processed when you retry.
+          </p>
+        )}
         <div>
           <button onClick={props.onRetry} style={retryButtonStyle} data-testid="retry-button">
-            Retry
+            {props.hasTranscriptSaved ? 'Retry Processing' : 'Retry'}
           </button>
           {props.onReset && (
             <button onClick={props.onReset} style={resetButtonStyle} data-testid="reset-button">

@@ -103,13 +103,16 @@ export class BackendService {
   }
 
   /**
-   * Submit transcript for processing with retry logic for 503 errors
+   * Submit transcript for processing with improved retry logic for 503 errors
    */
   async submitTranscript(
     callId: string,
     transcript: string,
-    retryCount: number = 0
+    retryCount: number = 0,
+    onRetryProgress?: (attempt: number, totalAttempts: number) => void
   ): Promise<SubmitTranscriptResponse> {
+    const maxRetries = 5; // Increased from 3 to give more time for warm-up
+    
     try {
       const payload = {
         callId: callId.trim(),
@@ -120,7 +123,8 @@ export class BackendService {
         callId: payload.callId,
         transcriptLength: payload.transcript.length,
         transcriptSample: payload.transcript.substring(0, 200) + '...',
-        attempt: retryCount + 1
+        attempt: retryCount + 1,
+        maxAttempts: maxRetries + 1
       });
       
       const response = await this.axiosInstance.post<SubmitTranscriptResponse>(
@@ -197,9 +201,13 @@ export class BackendService {
       console.error('Failed to submit transcript:', error);
       
       // Retry logic for 503 Service Unavailable (Cloud Run cold start)
-      if (error.response?.status === 503 && retryCount < 3) {
-        const delay = (retryCount + 1) * 2000; // 2s, 4s, 6s
-        console.log(`[BackendService] Got 503 (Service Unavailable), retrying in ${delay}ms (attempt ${retryCount + 2}/4)...`);
+      if (error.response?.status === 503 && retryCount < maxRetries) {
+        // Exponential backoff with jitter: 2s, 4s, 8s, 16s, 32s
+        const baseDelay = Math.min(2000 * Math.pow(2, retryCount), 32000);
+        const jitter = Math.random() * 1000; // Add up to 1s of jitter
+        const delay = baseDelay + jitter;
+        
+        console.log(`[BackendService] Got 503 (Service Unavailable), retrying in ${Math.round(delay)}ms (attempt ${retryCount + 2}/${maxRetries + 1})...`);
         console.log(`[BackendService] 503 Error details:`, {
           status: error.response?.status,
           statusText: error.response?.statusText,
@@ -207,17 +215,26 @@ export class BackendService {
           headers: error.response?.headers,
         });
         
-        // Try to warm up the service before retry
-        try {
-          await this.checkHealth();
-        } catch (healthError) {
-          console.warn('[BackendService] Health check failed during retry:', healthError);
+        // Notify progress if callback provided
+        if (onRetryProgress) {
+          onRetryProgress(retryCount + 2, maxRetries + 1);
         }
         
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return this.submitTranscript(callId, transcript, retryCount + 1);
+        // Try to warm up the service before retry (but don't wait too long)
+        const warmupPromise = this.checkHealth().catch(err => {
+          console.warn('[BackendService] Health check failed during retry:', err);
+        });
+        
+        // Wait for either the delay or warmup (whichever comes first)
+        await Promise.race([
+          new Promise(resolve => setTimeout(resolve, delay)),
+          warmupPromise.then(() => new Promise(resolve => setTimeout(resolve, 1000))) // If warmup succeeds, wait 1s more
+        ]);
+        
+        return this.submitTranscript(callId, transcript, retryCount + 1, onRetryProgress);
       }
       
+      // For non-503 errors or after max retries, throw the error
       throw error;
     }
   }
