@@ -111,6 +111,11 @@ export default function HomePage() {
           })
           .join('\n');
         
+        logger.log('[Page] Manual end - transcript before filtering:', {
+          rawTranscript: currentTranscript,
+          rawLength: currentTranscript.length
+        });
+        
         if (!transcriptText || transcriptText.trim().length === 0) {
           logger.warn('[Page] No valid transcript content to submit after filtering.');
           setUiState('idle');
@@ -202,8 +207,21 @@ export default function HomePage() {
           
           // Get the current transcript and callId from the store
           const state = useAppState.getState();
-          const transcript = state.currentTranscript;
+          let transcript = state.currentTranscript;
           const callId = state.appCallId;
+          
+          // Fallback to window backup if store is empty
+          if ((!transcript || transcript.length === 0) && (window as any).__latestTranscript) {
+            logger.log('[Page] Using backup transcript from window');
+            transcript = (window as any).__latestTranscript;
+          }
+          
+          logger.log('[Page] Natural end - getting transcript from store:', {
+            transcriptFromStore: transcript,
+            transcriptLength: transcript?.length || 0,
+            callIdFromStore: callId,
+            hasBackup: !!(window as any).__latestTranscript
+          });
           
           if (transcript.length > 0 && callId) {
             setUiState('processing');
@@ -219,6 +237,11 @@ export default function HomePage() {
                     return `${speakerLabel}: ${utt.transcript.trim()}`;
                   })
                   .join('\n');
+                
+                logger.log('[Page] Transcript before filtering:', {
+                  rawTranscript: transcript,
+                  rawLength: transcript.length
+                });
                 
                 if (!transcriptText || transcriptText.trim().length === 0) {
                   logger.warn('[Page] No valid transcript content to submit after filtering.');
@@ -270,9 +293,16 @@ export default function HomePage() {
   const handleManagerTranscriptUpdate = useCallback((transcripts: Utterance[]) => {
     logger.log('[Page] Transcript update received:', {
       count: transcripts.length,
-      transcripts: transcripts
+      transcripts: transcripts,
+      firstTranscript: transcripts[0],
+      lastTranscript: transcripts[transcripts.length - 1]
     });
     setCurrentTranscript(transcripts);
+    
+    // Also store in a ref to ensure we have it when disconnect happens
+    if (transcripts.length > 0) {
+      (window as any).__latestTranscript = transcripts;
+    }
   }, []); // Remove ALL dependencies
 
   const handleManagerSessionEnd = useCallback((details: { code?: number; reason?: string; error?: Error }) => {

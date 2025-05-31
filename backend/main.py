@@ -543,6 +543,10 @@ async def submit_transcript(data: dict = Body(...)):
     if not HF_API_TOKEN_VALUE or not AI3_HF_ENDPOINT_URL_VALUE: raise HTTPException(status_code=503, detail="AI#3 service unavailable (config missing at call time).")
 
     logger.info(f"Received transcript for callId {call_id}. Length: {len(transcript_text)} chars.")
+    
+    # Log first 200 chars of transcript for debugging
+    logger.info(f"Transcript preview: {transcript_text[:200]}...")
+    
     try:
         ai2_full_prompt = (
             f"{AI2_SUMMARIZATION_SYSTEM_PROMPT}\n\n"
@@ -558,7 +562,7 @@ async def submit_transcript(data: dict = Body(...)):
         )
         logger.info("AI #2 (Gemini) response received.")
         try:
-            cleaned_ai2_response_str = re.sub(r'^```json\s*|\s*```, ', ai2_response_str.strip(), flags=re.MULTILINE | re.DOTALL).strip()
+            cleaned_ai2_response_str = re.sub(r'^```json\s*|\s*```$', '', ai2_response_str.strip(), flags=re.MULTILINE | re.DOTALL).strip()
             summary_json_object = json.loads(cleaned_ai2_response_str)
             logger.info("AI #2 response successfully parsed as JSON.")
         except json.JSONDecodeError as je:
