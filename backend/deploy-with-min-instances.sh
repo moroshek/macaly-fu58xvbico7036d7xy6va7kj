@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# Google Cloud Run deployment script with minimum instances
+# This prevents cold start issues but incurs costs
+
+gcloud beta run deploy ai-medical-intake-service \
+  --source . \
+  --region "us-central1" \
+  --platform "managed" \
+  --execution-environment "gen2" \
+  --service-account="191450583446-compute@developer.gserviceaccount.com" \
+  --allow-unauthenticated \
+  --port=8080 \
+  --timeout=900s \
+  --min-instances=1 \
+  --max-instances=3 \
+  --no-cpu-throttling \
+  --cpu=2 \
+  --memory=1Gi \
+  --set-env-vars=^::^AI2_GEMINI_MODEL_NAME="gemini-2.5-flash-preview-05-20"::AI3_HF_ENDPOINT_URL="https://vvgxd2ms1kn7p2sq.us-east4.gcp.endpoints.huggingface.cloud"::ULTRAVOX_AGENT_ID="fb42f359-003c-4875-b1a1-06c4c1c87376"::ALLOWED_ORIGINS="https://aimedintake.netlify.app,https://aimedintake.com,https://macaly-fu58xvbico7036d7xy6va7kj.macaly-app.com,https://main--aimedintake.netlify.app,http://localhost:3000" \
+  --set-secrets="GEMINI_API_KEY=gemini-api-key-for-medintake:latest,ULTRAVOX_API_KEY=ultravox-api-key:latest,HF_API_TOKEN=hf-api-token:latest"

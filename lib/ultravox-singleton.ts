@@ -2,6 +2,7 @@
 import { UltravoxSession } from 'ultravox-client';
 import { Utterance } from '@/lib/types';
 import { logger } from '@/lib/logger';
+import { getConfig } from '@/lib/config';
 
 interface SessionCallbacks {
   onStatusChange: (status: string, details?: any) => void;
@@ -117,15 +118,36 @@ class UltravoxSingleton {
     });
 
     this.session.addEventListener('transcripts', (event) => {
-      logger.log('[UltravoxSingleton] Transcripts event:', event);
+      const config = getConfig();
       const rawTranscripts = this.session?.transcripts || [];
-      logger.log('[UltravoxSingleton] Raw transcripts:', rawTranscripts);
-      logger.log('[UltravoxSingleton] Raw transcripts length:', rawTranscripts.length);
+      
+      // Skip empty transcript events completely after disconnect
+      if (rawTranscripts.length === 0 && (!this.session || this.session.status === 'disconnected')) {
+        return;
+      }
+      
+      // Only log verbose transcript details if enabled
+      if (config.enableVerboseTranscriptLogging && rawTranscripts.length > 0) {
+        logger.debug('[UltravoxSingleton] Transcripts event:', event);
+        logger.debug('[UltravoxSingleton] Raw transcripts:', rawTranscripts);
+        logger.debug('[UltravoxSingleton] Raw transcripts length:', rawTranscripts.length);
+      }
       
       // Map Ultravox transcript format to our Utterance type
       const utterances: Utterance[] = rawTranscripts.map((t: any) => {
-        // Log the raw transcript object to understand its structure
-        logger.log('[UltravoxSingleton] Raw transcript item:', t);
+        // Only log individual transcript items if verbose logging is enabled
+        if (config.enableVerboseTranscriptLogging) {
+          logger.debug('[UltravoxSingleton] Raw transcript item:', t);
+        }
+        
+        // Log final transcripts at normal level (not debug)
+        if (t.isFinal) {
+          logger.log('[UltravoxSingleton] Final transcript:', {
+            speaker: t.speaker,
+            text: t.text,
+            isFinal: t.isFinal
+          });
+        }
         
         return {
           speaker: t.speaker || t.role || 'unknown',
@@ -134,7 +156,10 @@ class UltravoxSingleton {
         };
       });
       
-      logger.log('[UltravoxSingleton] Mapped utterances:', utterances);
+      if (config.enableVerboseTranscriptLogging) {
+        logger.debug('[UltravoxSingleton] Mapped utterances:', utterances);
+      }
+      
       this.callbacks?.onTranscriptUpdate(utterances);
     });
 

@@ -1,10 +1,18 @@
 // lib/logger.ts
 
+import { getConfig } from './config';
+
 const getTimestamp = (): string => new Date().toISOString();
 
 export const logger = {
   log: (...args: any[]): void => {
     console.log(`[${getTimestamp()}] [LOG]`, ...args);
+  },
+  debug: (...args: any[]): void => {
+    const config = getConfig();
+    if (config.enableDebugLogging) {
+      console.log(`[${getTimestamp()}] [DEBUG]`, ...args);
+    }
   },
   warn: (...args: any[]): void => {
     console.warn(`[${getTimestamp()}] [WARN]`, ...args);
@@ -13,8 +21,3 @@ export const logger = {
     console.error(`[${getTimestamp()}] [ERROR]`, ...args);
   },
 };
-
-// Example Usage (optional, for testing)
-// logger.log('This is a log message.');
-// logger.warn('This is a warning message.');
-// logger.error('This is an error message.', new Error('Example Error'));

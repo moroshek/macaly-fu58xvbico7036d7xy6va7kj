@@ -8,6 +8,7 @@ import { BackendService } from '@/lib/backend-service';
 import { ErrorOverlay } from '@/components/ErrorOverlay';
 import { useUltravoxSingleton } from '@/hooks/useUltravoxSingleton';
 import { logger } from '@/lib/logger';
+import { getConfig } from '@/lib/config';
 
 export default function HomePage() {
   // State from Zustand store
@@ -30,9 +31,24 @@ export default function HomePage() {
   const [summaryData, setSummaryData] = useState<any>(null);
   const [analysisData, setAnalysisData] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isManualEnd, setIsManualEnd] = useState(false);
 
   useEffect(() => {
     logger.log('[Page] Component Mounted.');
+    
+    // Warm up the backend service to prevent cold start 503 errors
+    BackendService.getInstance().checkHealth()
+      .then(isHealthy => {
+        if (isHealthy) {
+          logger.log('[Page] Backend service is healthy and warmed up.');
+        } else {
+          logger.warn('[Page] Backend service health check failed.');
+        }
+      })
+      .catch(err => {
+        logger.warn('[Page] Backend service warm-up failed:', err.message);
+      });
+    
     return () => {
       logger.log('[Page] Component Unmounted.');
     };
@@ -58,6 +74,7 @@ export default function HomePage() {
     setShouldConnectUltravox(false);
     setSummaryData(null);
     setAnalysisData(null);
+    setIsManualEnd(false); // Reset manual end flag for new interview
 
     try {
       const details = await BackendService.getInstance().initiateIntake();
@@ -88,6 +105,9 @@ export default function HomePage() {
 
   const handleEndInterviewClick = useCallback(async () => {
     logger.log('[Page] End Interview button clicked.');
+    
+    // Set manual end flag to prevent duplicate submission
+    setIsManualEnd(true);
     
     // Immediately disconnect the Ultravox session
     setShouldConnectUltravox(false);
@@ -146,7 +166,14 @@ export default function HomePage() {
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
         logger.error('[Page] Failed to submit transcript:', errMsg, error);
-        setAppErrorMessage(`Processing failed: ${errMsg}`);
+        
+        // Handle 503 Service Unavailable with a user-friendly message
+        if (errMsg.includes('503')) {
+          setAppErrorMessage('The processing service is temporarily unavailable. Please try again in a few moments.');
+        } else {
+          setAppErrorMessage(`Processing failed: ${errMsg}`);
+        }
+        
         setUiState('error');
         setIsProcessing(false);
       }
@@ -200,8 +227,8 @@ export default function HomePage() {
         // Natural session end
         setShouldConnectUltravox(false);
         
-        // Check if we were in an active interview
-        if (currentUIState === 'interviewing') {
+        // Check if we were in an active interview and not manual end
+        if (currentUIState === 'interviewing' && !isManualEnd) {
           // Trigger transcript processing
           logger.log('[Page] Interview ended naturally, processing transcript...');
           
@@ -271,7 +298,14 @@ export default function HomePage() {
               } catch (error) {
                 const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
                 logger.error('[Page] Failed to submit transcript:', errMsg, error);
-                setAppErrorMessage(`Processing failed: ${errMsg}`);
+                
+                // Handle 503 Service Unavailable with a user-friendly message
+                if (errMsg.includes('503')) {
+                  setAppErrorMessage('The processing service is temporarily unavailable. Please try again in a few moments.');
+                } else {
+                  setAppErrorMessage(`Processing failed: ${errMsg}`);
+                }
+                
                 setUiState('error');
               }
             })();
@@ -288,15 +322,21 @@ export default function HomePage() {
         setShouldConnectUltravox(false);
         break;
     }
-  }, [setSummaryData, setAnalysisData]); // Only add the data setters that are used in async operations
+  }, [setSummaryData, setAnalysisData, isManualEnd]); // Only add the data setters that are used in async operations
 
   const handleManagerTranscriptUpdate = useCallback((transcripts: Utterance[]) => {
-    logger.log('[Page] Transcript update received:', {
-      count: transcripts.length,
-      transcripts: transcripts,
-      firstTranscript: transcripts[0],
-      lastTranscript: transcripts[transcripts.length - 1]
-    });
+    const config = getConfig();
+    
+    // Only log verbose transcript details if enabled
+    if (config.enableVerboseTranscriptLogging) {
+      logger.debug('[Page] Transcript update received:', {
+        count: transcripts.length,
+        transcripts: transcripts,
+        firstTranscript: transcripts[0],
+        lastTranscript: transcripts[transcripts.length - 1]
+      });
+    }
+    
     setCurrentTranscript(transcripts);
     
     // Also store in a ref to ensure we have it when disconnect happens

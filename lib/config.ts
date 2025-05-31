@@ -11,6 +11,7 @@ export interface AppConfig {
   rateLimitWindowMs: number;
   networkQualityCheckIntervalMs: number;
   enableDebugLogging: boolean;
+  enableVerboseTranscriptLogging: boolean;
   enableAnalytics: boolean;
   ultravoxApiBaseUrl: string;
   geminiApiBaseUrl: string;
@@ -28,6 +29,7 @@ const defaultConfig: AppConfig = {
   rateLimitWindowMs: 60000,
   networkQualityCheckIntervalMs: 30000,
   enableDebugLogging: process.env.NODE_ENV === 'development',
+  enableVerboseTranscriptLogging: process.env.NEXT_PUBLIC_VERBOSE_TRANSCRIPT_LOGGING === 'true',
   enableAnalytics: process.env.NODE_ENV === 'production',
   ultravoxApiBaseUrl: "https://api.ultravox.ai/api",
   geminiApiBaseUrl: "https://generativelanguage.googleapis.com/v1beta/models",

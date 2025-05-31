@@ -103,11 +103,12 @@ export class BackendService {
   }
 
   /**
-   * Submit transcript for processing
+   * Submit transcript for processing with retry logic for 503 errors
    */
   async submitTranscript(
     callId: string,
-    transcript: string
+    transcript: string,
+    retryCount: number = 0
   ): Promise<SubmitTranscriptResponse> {
     try {
       const payload = {
@@ -118,7 +119,8 @@ export class BackendService {
       console.log('[BackendService] Submitting transcript payload:', {
         callId: payload.callId,
         transcriptLength: payload.transcript.length,
-        transcriptSample: payload.transcript.substring(0, 200) + '...'
+        transcriptSample: payload.transcript.substring(0, 200) + '...',
+        attempt: retryCount + 1
       });
       
       const response = await this.axiosInstance.post<SubmitTranscriptResponse>(
@@ -179,8 +181,18 @@ export class BackendService {
       }
       
       return responseData;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to submit transcript:', error);
+      
+      // Retry logic for 503 Service Unavailable (Cloud Run cold start)
+      if (error.response?.status === 503 && retryCount < 3) {
+        const delay = (retryCount + 1) * 2000; // 2s, 4s, 6s
+        console.log(`[BackendService] Got 503, retrying in ${delay}ms (attempt ${retryCount + 2}/4)...`);
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.submitTranscript(callId, transcript, retryCount + 1);
+      }
+      
       throw error;
     }
   }
