@@ -178,11 +178,11 @@ export default function HomePage() {
         setShouldConnectUltravox(false);
         break;
     }
-  }, []); // Remove ALL dependencies to make callback truly stable
+  }, []); // Remove ALL dependencies
 
   const handleManagerTranscriptUpdate = useCallback((transcripts: Utterance[]) => {
     setCurrentTranscript(transcripts);
-  }, []);
+  }, []); // Remove ALL dependencies
 
   const handleManagerSessionEnd = useCallback((details: { code?: number; reason?: string; error?: Error }) => {
     logger.log('[Page] Manager Session End event received:', details);
@@ -208,7 +208,7 @@ export default function HomePage() {
       logger.log('[Page] Session ended normally.');
       setUiState('callEnded'); 
     }
-  }, []);
+  }, []); // Remove ALL dependencies
 
   const handleManagerError = useCallback((error: Error, context?: string) => {
     const ctxMsg = context ? ` (${context})` : '';
@@ -230,7 +230,7 @@ export default function HomePage() {
     
     setUiState('error');
     setShouldConnectUltravox(false);
-  }, []);
+  }, []); // Remove ALL dependencies
 
   const handleRetryFromError = useCallback(async () => {
     logger.log('[Page] Retry button clicked from error state - forcing new call creation.');
@@ -326,7 +326,7 @@ export default function HomePage() {
     );
   }, []);
 
-  // Memoize the entire UltravoxSessionManager component to prevent re-renders
+  // Memoize with ONLY essential props to prevent UI animation re-renders from causing remounts
   const memoizedSessionManager = useMemo(() => (
     <UltravoxSessionManager
       joinUrl={appJoinUrl}
@@ -339,14 +339,11 @@ export default function HomePage() {
       onExperimentalMessage={handleManagerExperimentalMessage}
     />
   ), [
+    // ONLY session-critical props - callbacks are now stable with empty deps
     appJoinUrl,
     appCallId, 
-    shouldConnectUltravox,
-    handleManagerStatusChange,
-    handleManagerTranscriptUpdate,
-    handleManagerSessionEnd,
-    handleManagerError,
-    handleManagerExperimentalMessage
+    shouldConnectUltravox
+    // Removed callback dependencies since they're now stable
   ]);
 
 
