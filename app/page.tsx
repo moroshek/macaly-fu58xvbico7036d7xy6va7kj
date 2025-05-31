@@ -6,7 +6,7 @@ import { useAppState } from '@/store/useAppState';
 import { Utterance } from '@/lib/types';
 import { BackendService } from '@/lib/backend-service'; 
 import { ErrorOverlay } from '@/components/ErrorOverlay';
-import { UltravoxSessionManager } from '@/components/UltravoxSessionManager';
+import { useUltravoxSingleton } from '@/hooks/useUltravoxSingleton';
 import { logger } from '@/lib/logger';
 
 export default function HomePage() {
@@ -326,30 +326,21 @@ export default function HomePage() {
     );
   }, []);
 
-  // CRITICAL FIX: Always render the session manager to prevent remounting
-  // The manager will handle connection state internally based on props
-  const sessionManager = (
-    <UltravoxSessionManager
-      joinUrl={appJoinUrl}
-      callId={appCallId}
-      shouldConnect={shouldConnectUltravox && !!(appJoinUrl && appCallId)}
-      onStatusChange={handleManagerStatusChange}
-      onTranscriptUpdate={handleManagerTranscriptUpdate}
-      onSessionEnd={handleManagerSessionEnd}
-      onError={handleManagerError}
-      onExperimentalMessage={handleManagerExperimentalMessage}
-    />
-  );
+  // Use the singleton-based Ultravox connection
+  useUltravoxSingleton({
+    joinUrl: appJoinUrl,
+    callId: appCallId,
+    shouldConnect: shouldConnectUltravox && !!(appJoinUrl && appCallId),
+    onStatusChange: handleManagerStatusChange,
+    onTranscriptUpdate: handleManagerTranscriptUpdate,
+    onSessionEnd: handleManagerSessionEnd,
+    onError: handleManagerError,
+    onExperimentalMessage: handleManagerExperimentalMessage
+  });
 
 
   return (
-    <>
-      {/* Session Manager - Moved outside main content div to isolate from UI re-renders */}
-      <div key="ultravox-stable-root" style={{ position: 'fixed', top: -9999, left: -9999, width: 1, height: 1, overflow: 'hidden' }}>
-        {sessionManager}
-      </div>
-      
-      <div className="min-h-screen bg-white overflow-x-hidden">
+    <div className="min-h-screen bg-white overflow-x-hidden">
         {/* Fixed Header */}
         <header className={`fixed top-0 w-full z-50 transition-all duration-300 ${headerScrolled ? 'py-3 shadow-md' : 'py-4 shadow-sm'} bg-white/98 backdrop-blur-sm`}>
         <div className="max-w-6xl mx-auto px-8 flex justify-between items-center">
@@ -754,7 +745,6 @@ export default function HomePage() {
             onReset={handleFullReset} 
           />
         )}
-      </div>
-    </>
+    </div>
   );
 }
