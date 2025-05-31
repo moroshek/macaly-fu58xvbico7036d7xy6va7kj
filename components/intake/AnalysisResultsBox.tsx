@@ -19,7 +19,7 @@ const AnalysisResultsBox: React.FC<AnalysisResultsBoxProps> = ({ analysisData, i
   }, [analysisData]);
 
   return (
-    <div className="bg-white rounded-lg border border-teal-100 shadow-md overflow-hidden">
+    <div className="bg-white rounded-lg border border-teal-100 shadow-md overflow-hidden animate-fade-in">
       <div className="bg-gradient-to-r from-blue-500 to-blue-600 py-3 px-4">
         <h2 className="text-white text-lg font-medium">Provider Review Summary</h2>
       </div>

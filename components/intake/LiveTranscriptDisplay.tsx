@@ -12,7 +12,11 @@ const LiveTranscriptDisplay: React.FC<LiveTranscriptDisplayProps> = ({ transcrip
 
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      // Smooth scroll to bottom when new messages arrive
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
     }
   }, [transcript]);
 
@@ -33,7 +37,7 @@ const LiveTranscriptDisplay: React.FC<LiveTranscriptDisplayProps> = ({ transcrip
       {transcript.map((item, index) => (
         <div 
           key={index} 
-          className={`p-2 rounded ${
+          className={`p-2 rounded animate-fade-in ${
             item.speaker === 'user' 
               ? 'bg-blue-100 text-blue-800 ml-4' 
               : 'bg-green-100 text-green-800 mr-4'

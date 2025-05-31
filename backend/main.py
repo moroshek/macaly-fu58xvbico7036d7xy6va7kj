@@ -457,6 +457,9 @@ Begin your analysis now.
     return analysis_prompt
 
 def extract_answer_from_tags(text_with_tags: str, tag_name: str = "answer") -> str | None:
+    logger.info(f"[extract_answer_from_tags] Input text length: {len(text_with_tags)}")
+    logger.info(f"[extract_answer_from_tags] Input text preview: {text_with_tags[:200]}...")
+    
     # Try multiple patterns to be more flexible
     patterns = [
         rf'<{tag_name}>(.*?)</{tag_name}>',  # Standard format
@@ -469,6 +472,9 @@ def extract_answer_from_tags(text_with_tags: str, tag_name: str = "answer") -> s
         match = re.search(pattern, text_with_tags, re.DOTALL | re.IGNORECASE)
         if match:
             extracted = match.group(1).strip()
+            logger.info(f"[extract_answer_from_tags] Successfully extracted content using pattern: {pattern}")
+            logger.info(f"[extract_answer_from_tags] Extracted content: '{extracted}'")
+            logger.info(f"[extract_answer_from_tags] Extracted content length: {len(extracted)}")
             logger.debug(f"Successfully extracted content using pattern: {pattern}")
             return extracted
     
@@ -603,12 +609,23 @@ async def submit_transcript(data: dict = Body(...)):
         ai3_raw_response = await call_hf_inference_api(prompt=ai3_prompt)
         logger.info("AI #3 (HF) response received.")
         logger.debug(f"AI #3 raw response preview (first 200 chars): {ai3_raw_response[:200]}...")
+        logger.info(f"AI #3 full raw response: {ai3_raw_response}")
+        
         clinical_analysis_text = extract_answer_from_tags(ai3_raw_response, tag_name="answer")
+        
+        logger.info(f"Extracted clinical analysis text: '{clinical_analysis_text}'")
+        logger.info(f"Clinical analysis length: {len(clinical_analysis_text)}")
+        logger.info(f"Clinical analysis type: {type(clinical_analysis_text)}")
+        
         if clinical_analysis_text == ai3_raw_response and not ("<answer>" in ai3_raw_response and "</answer>" in ai3_raw_response) :
              logger.warning("AI #3 (HF) response did not contain <answer> tags as instructed. Using raw response.")
         else:
             logger.info("Successfully extracted/processed clinical analysis from AI #3 (HF).")
-        return {"message": "Transcript processed successfully.", "summary": summary_json_object, "analysis": clinical_analysis_text}
+        
+        final_response = {"message": "Transcript processed successfully.", "summary": summary_json_object, "analysis": clinical_analysis_text}
+        logger.info(f"Final response being sent: {json.dumps(final_response, indent=2)}")
+        
+        return final_response
     except HTTPException: raise 
     except Exception as e:
         logger.error(f"Unexpected error processing transcript for callId {call_id}: {e}", exc_info=True)

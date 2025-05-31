@@ -180,6 +180,18 @@ export class BackendService {
         }
       }
       
+      // Debug logging for analysis content
+      if (responseData.analysis) {
+        console.log('[BackendService] Analysis data received:', {
+          analysisLength: responseData.analysis.length,
+          analysisPreview: responseData.analysis.substring(0, 200) + '...',
+          analysisType: typeof responseData.analysis,
+          analysisFullContent: responseData.analysis
+        });
+      } else {
+        console.log('[BackendService] No analysis data in response');
+      }
+      
       return responseData;
     } catch (error: any) {
       console.error('Failed to submit transcript:', error);

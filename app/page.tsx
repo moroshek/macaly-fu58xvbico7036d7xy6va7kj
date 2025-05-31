@@ -161,6 +161,13 @@ export default function HomePage() {
         }
         
         if (response.analysis) {
+          logger.log('[Page] Analysis received - Debug info:', {
+            analysisType: typeof response.analysis,
+            analysisLength: response.analysis.length,
+            analysisPreview: response.analysis.substring(0, 100) + '...',
+            analysisFullContent: response.analysis,
+            responseKeys: Object.keys(response)
+          });
           setAnalysisData(response.analysis);
           logger.log('[Page] Analysis received:', response.analysis);
         }
@@ -486,6 +493,7 @@ export default function HomePage() {
   // Animation states
   const [isVisible, setIsVisible] = useState(false);
   const [headerScrolled, setHeaderScrolled] = useState(false);
+  
 
   useEffect(() => {
     setIsVisible(true);
@@ -761,7 +769,17 @@ export default function HomePage() {
                   <div className="animate-fade-in">
                     <div className="bg-white p-4 rounded-lg border-l-4 border-purple-500">
                       <div className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">
-                        {analysisData.replace(/<\/?answer>/gi, '').trim()}
+                        {(() => {
+                          const cleanedAnalysis = analysisData.replace(/<\/?answer>/gi, '').trim();
+                          console.log('[Page] Rendering analysis:', {
+                            originalLength: analysisData.length,
+                            cleanedLength: cleanedAnalysis.length,
+                            cleanedContent: cleanedAnalysis,
+                            firstChar: cleanedAnalysis.charAt(0),
+                            lastChar: cleanedAnalysis.charAt(cleanedAnalysis.length - 1)
+                          });
+                          return cleanedAnalysis;
+                        })()}
                       </div>
                     </div>
                   </div>

@@ -12,7 +12,7 @@ interface SummaryResultsBoxProps {
 
 const SummaryResultsBox: React.FC<SummaryResultsBoxProps> = ({ summaryData, isLoading, formatSummaryField }) => {
   return (
-    <div className="bg-white rounded-lg border border-teal-100 shadow-md overflow-hidden">
+    <div className="bg-white rounded-lg border border-teal-100 shadow-md overflow-hidden animate-fade-in">
       <div className="bg-gradient-to-r from-teal-500 to-teal-600 py-3 px-4">
         <h2 className="text-white text-lg font-medium">Medical Intake Summary</h2>
       </div>
@@ -21,11 +21,15 @@ const SummaryResultsBox: React.FC<SummaryResultsBoxProps> = ({ summaryData, isLo
           <FunLoadingAnimation variant="summary" />
         ) : (
           summaryData && Object.values(summaryData).some(value => value !== null && (typeof value === 'string' ? value.trim() !== '' : true)) ? (
-            Object.entries(summaryData).map(([key, value]) => {
+            Object.entries(summaryData).map(([key, value], index) => {
               if (value === null || (typeof value === 'string' && value.trim() === '')) return null;
               const formattedKey = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
               return (
-                <div key={key} className="w-full border-b border-gray-100 pb-3 last:border-0 last:pb-0">
+                <div 
+                  key={key} 
+                  className="w-full border-b border-gray-100 pb-3 last:border-0 last:pb-0 animate-fade-in"
+                  style={{ animationDelay: `${index * 100}ms` }}
+                >
                   <h3 className="text-sm font-semibold text-teal-700">{formattedKey}</h3>
                   <p className="text-sm text-gray-700 mt-1">{formatSummaryField(value)}</p>
                 </div>
