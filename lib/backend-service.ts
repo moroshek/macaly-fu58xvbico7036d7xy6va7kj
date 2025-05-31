@@ -110,12 +110,20 @@ export class BackendService {
     transcript: string
   ): Promise<SubmitTranscriptResponse> {
     try {
+      const payload = {
+        callId: callId.trim(),
+        transcript: transcript,
+      };
+      
+      console.log('[BackendService] Submitting transcript payload:', {
+        callId: payload.callId,
+        transcriptLength: payload.transcript.length,
+        transcriptSample: payload.transcript.substring(0, 200) + '...'
+      });
+      
       const response = await this.axiosInstance.post<SubmitTranscriptResponse>(
         API_ENDPOINTS.SUBMIT_TRANSCRIPT,
-        {
-          callId: callId.trim(),
-          transcript: transcript,
-        },
+        payload,
         {
           timeout: this.config.transcriptSubmissionTimeoutMs,
           headers: {

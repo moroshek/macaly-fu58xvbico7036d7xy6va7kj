@@ -102,11 +102,28 @@ export default function HomePage() {
     // Submit transcript to backend
     if (currentTranscript.length > 0 && appCallId) {
       try {
+        // Filter out empty transcripts and format properly
         const transcriptText = currentTranscript
-          .map(utt => `${utt.speaker}: ${utt.transcript}`)
+          .filter(utt => utt.transcript && utt.transcript.trim())
+          .map(utt => {
+            const speakerLabel = utt.speaker === 'agent' ? 'AI Assistant' : 'Patient';
+            return `${speakerLabel}: ${utt.transcript.trim()}`;
+          })
           .join('\n');
         
-        logger.log('[Page] Submitting transcript to backend...');
+        if (!transcriptText || transcriptText.trim().length === 0) {
+          logger.warn('[Page] No valid transcript content to submit after filtering.');
+          setUiState('idle');
+          setIsProcessing(false);
+          return;
+        }
+        
+        logger.log('[Page] Submitting transcript to backend...', {
+          callId: appCallId,
+          transcriptLength: transcriptText.length,
+          utteranceCount: currentTranscript.length,
+          sampleText: transcriptText.substring(0, 100) + '...'
+        });
         const response = await BackendService.getInstance().submitTranscript(appCallId, transcriptText);
         
         if (response.summary) {
@@ -177,6 +194,69 @@ export default function HomePage() {
       case 'disconnected':
         // Natural session end
         setShouldConnectUltravox(false);
+        
+        // Check if we were in an active interview
+        if (currentUIState === 'interviewing') {
+          // Trigger transcript processing
+          logger.log('[Page] Interview ended naturally, processing transcript...');
+          
+          // Get the current transcript and callId from the store
+          const state = useAppState.getState();
+          const transcript = state.currentTranscript;
+          const callId = state.appCallId;
+          
+          if (transcript.length > 0 && callId) {
+            setUiState('processing');
+            
+            // Process transcript asynchronously
+            (async () => {
+              try {
+                // Filter out empty transcripts and format properly
+                const transcriptText = transcript
+                  .filter(utt => utt.transcript && utt.transcript.trim())
+                  .map(utt => {
+                    const speakerLabel = utt.speaker === 'agent' ? 'AI Assistant' : 'Patient';
+                    return `${speakerLabel}: ${utt.transcript.trim()}`;
+                  })
+                  .join('\n');
+                
+                if (!transcriptText || transcriptText.trim().length === 0) {
+                  logger.warn('[Page] No valid transcript content to submit after filtering.');
+                  setUiState('completed');
+                  return;
+                }
+                
+                logger.log('[Page] Submitting transcript to backend...', {
+                  callId,
+                  transcriptLength: transcriptText.length,
+                  utteranceCount: transcript.length,
+                  sampleText: transcriptText.substring(0, 100) + '...'
+                });
+                const response = await BackendService.getInstance().submitTranscript(callId, transcriptText);
+                
+                if (response.summary) {
+                  setSummaryData(response.summary);
+                  logger.log('[Page] Summary received:', response.summary);
+                }
+                
+                if (response.analysis) {
+                  setAnalysisData(response.analysis);
+                  logger.log('[Page] Analysis received:', response.analysis);
+                }
+                
+                setUiState('completed');
+              } catch (error) {
+                const errMsg = error instanceof Error ? error.message : 'Unknown error during transcript submission.';
+                logger.error('[Page] Failed to submit transcript:', errMsg, error);
+                setAppErrorMessage(`Processing failed: ${errMsg}`);
+                setUiState('error');
+              }
+            })();
+          } else {
+            logger.warn('[Page] No transcript to submit or missing call ID.');
+            setUiState('idle');
+          }
+        }
         break;
       case 'failed':
       case 'error':
@@ -185,7 +265,7 @@ export default function HomePage() {
         setShouldConnectUltravox(false);
         break;
     }
-  }, []); // Remove ALL dependencies
+  }, [setSummaryData, setAnalysisData]); // Only add the data setters that are used in async operations
 
   const handleManagerTranscriptUpdate = useCallback((transcripts: Utterance[]) => {
     setCurrentTranscript(transcripts);
@@ -438,11 +518,21 @@ export default function HomePage() {
                   <div className="absolute inset-0 bg-gradient-to-br from-teal-50 to-teal-100/50 rounded-full animate-pulse-ring"></div>
                   
                   {/* Main avatar */}
-                  <div className="relative w-24 h-24 bg-gradient-to-br from-teal-50 to-teal-100 rounded-full flex items-center justify-center animate-pulse-slow">
-                    <div className="w-12 h-12 bg-teal-500 rounded-full flex items-center justify-center shadow-lg relative overflow-hidden">
-                      <svg className="w-6 h-6 text-white relative z-10" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M12 1a11 11 0 0 0-11 11v3c0 1.66 1.34 3 3 3h.5a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 4.5 9H4v-1a8 8 0 1 1 16 0v1h-.5A1.5 1.5 0 0 0 18 10.5v6a1.5 1.5 0 0 0 1.5 1.5H20a3 3 0 0 0 3-3v-3A11 11 0 0 0 12 1z"/>
-                      </svg>
+                  <div className={`relative w-24 h-24 bg-gradient-to-br rounded-full flex items-center justify-center ${
+                    uiState === 'completed' ? 'from-green-50 to-green-100' : 'from-teal-50 to-teal-100 animate-pulse-slow'
+                  }`}>
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg relative overflow-hidden ${
+                      uiState === 'completed' ? 'bg-green-500' : 'bg-teal-500'
+                    }`}>
+                      {uiState === 'completed' ? (
+                        <svg className="w-6 h-6 text-white relative z-10" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                        </svg>
+                      ) : (
+                        <svg className="w-6 h-6 text-white relative z-10" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 1a11 11 0 0 0-11 11v3c0 1.66 1.34 3 3 3h.5a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 4.5 9H4v-1a8 8 0 1 1 16 0v1h-.5A1.5 1.5 0 0 0 18 10.5v6a1.5 1.5 0 0 0 1.5 1.5H20a3 3 0 0 0 3-3v-3A11 11 0 0 0 12 1z"/>
+                        </svg>
+                      )}
                       <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer"></div>
                     </div>
                   </div>
@@ -451,7 +541,9 @@ export default function HomePage() {
                 <p className="text-xs text-gray-600 mb-4">
                   {['fetchingCallDetails', 'connecting'].includes(uiState) ? 
                     (uiState === 'fetchingCallDetails' ? 'Getting details...' : 'Connecting...') :
-                    isProcessing ? 'Processing...' :
+                    uiState === 'processing' ? 'Processing transcript...' :
+                    uiState === 'completed' ? 'Interview completed ✓' :
+                    uiState === 'interviewing' ? 'Interview in progress...' :
                     'Ready to start'
                   }
                 </p>
