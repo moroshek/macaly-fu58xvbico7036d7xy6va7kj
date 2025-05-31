@@ -268,6 +268,10 @@ export default function HomePage() {
   }, [setSummaryData, setAnalysisData]); // Only add the data setters that are used in async operations
 
   const handleManagerTranscriptUpdate = useCallback((transcripts: Utterance[]) => {
+    logger.log('[Page] Transcript update received:', {
+      count: transcripts.length,
+      transcripts: transcripts
+    });
     setCurrentTranscript(transcripts);
   }, []); // Remove ALL dependencies
 

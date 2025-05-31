@@ -23,7 +23,9 @@
       "Bash(npx -y @smithery/cli install perplexity-mcp --client claude)",
       "Bash(claude mcp add perplexity:*)",
       "WebFetch(domain:docs.qerko.com)",
-      "Bash(npx next lint:*)"
+      "Bash(npx next lint:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs"
     ],
     "deny": []
   }

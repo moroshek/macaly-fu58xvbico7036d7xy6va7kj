@@ -117,8 +117,25 @@ class UltravoxSingleton {
     });
 
     this.session.addEventListener('transcripts', (event) => {
-      const transcripts = this.session?.transcripts || [];
-      this.callbacks?.onTranscriptUpdate(transcripts as Utterance[]);
+      logger.log('[UltravoxSingleton] Transcripts event:', event);
+      const rawTranscripts = this.session?.transcripts || [];
+      logger.log('[UltravoxSingleton] Raw transcripts:', rawTranscripts);
+      logger.log('[UltravoxSingleton] Raw transcripts length:', rawTranscripts.length);
+      
+      // Map Ultravox transcript format to our Utterance type
+      const utterances: Utterance[] = rawTranscripts.map((t: any) => {
+        // Log the raw transcript object to understand its structure
+        logger.log('[UltravoxSingleton] Raw transcript item:', t);
+        
+        return {
+          speaker: t.speaker || t.role || 'unknown',
+          transcript: t.text || t.transcript || t.message || '',
+          timestamp: t.timestamp || Date.now()
+        };
+      });
+      
+      logger.log('[UltravoxSingleton] Mapped utterances:', utterances);
+      this.callbacks?.onTranscriptUpdate(utterances);
     });
 
     this.session.addEventListener('error', (event) => {
