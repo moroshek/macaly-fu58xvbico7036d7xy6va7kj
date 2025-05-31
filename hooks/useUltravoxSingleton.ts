@@ -22,7 +22,13 @@ export function useUltravoxSingleton(props: UseUltravoxSingletonProps) {
   useEffect(() => {
     // Set callbacks on the singleton
     ultravoxSingleton.setCallbacks(callbacks);
-  }, [callbacks]);
+  }, [
+    callbacks.onStatusChange,
+    callbacks.onTranscriptUpdate,
+    callbacks.onSessionEnd,
+    callbacks.onError,
+    callbacks.onExperimentalMessage
+  ]);
 
   useEffect(() => {
     logger.log('[useUltravoxSingleton] Effect triggered', { 
@@ -74,10 +80,13 @@ export function useUltravoxSingleton(props: UseUltravoxSingletonProps) {
     } else if (!shouldConnect && hasConnectedRef.current) {
       // Disconnect when shouldConnect becomes false
       logger.log('[useUltravoxSingleton] Disconnecting...');
-      ultravoxSingleton.disconnect();
-      hasConnectedRef.current = false;
+      const disconnectAsync = async () => {
+        await ultravoxSingleton.disconnect();
+        hasConnectedRef.current = false;
+      };
+      disconnectAsync();
     }
-  }, [shouldConnect, joinUrl, callId, callbacks]);
+  }, [shouldConnect, joinUrl, callId]);
 
   // Cleanup on unmount
   useEffect(() => {

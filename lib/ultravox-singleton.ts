@@ -91,13 +91,20 @@ class UltravoxSingleton {
     }
 
     try {
+      // First notify callbacks that we're disconnecting
+      this.callbacks?.onStatusChange('disconnecting');
+      
       if (this.session.status !== 'disconnected') {
+        logger.log('[UltravoxSingleton] Calling endCall()...');
         await this.session.endCall();
+        logger.log('[UltravoxSingleton] endCall() completed');
       }
     } catch (error) {
       logger.error('[UltravoxSingleton] Error during disconnect:', error);
     } finally {
       this.cleanup();
+      // Notify that we've disconnected
+      this.callbacks?.onStatusChange('disconnected');
     }
   }
 
@@ -146,6 +153,20 @@ class UltravoxSingleton {
 
   isConnected(): boolean {
     return this.session !== null && this.session.status !== 'disconnected';
+  }
+
+  forceDisconnect() {
+    logger.log('[UltravoxSingleton] Force disconnect requested');
+    if (this.session) {
+      try {
+        // Force cleanup without waiting for endCall
+        this.session.removeAllEventListeners();
+      } catch (error) {
+        logger.error('[UltravoxSingleton] Error removing event listeners:', error);
+      }
+    }
+    this.cleanup();
+    this.callbacks?.onStatusChange('disconnected');
   }
 }
 

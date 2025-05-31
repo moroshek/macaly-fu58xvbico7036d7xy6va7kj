@@ -88,7 +88,14 @@ export default function HomePage() {
 
   const handleEndInterviewClick = useCallback(async () => {
     logger.log('[Page] End Interview button clicked.');
-    setShouldConnectUltravox(false); 
+    
+    // Immediately disconnect the Ultravox session
+    setShouldConnectUltravox(false);
+    
+    // Force immediate disconnect to stop audio
+    const { ultravoxSingleton } = await import('@/lib/ultravox-singleton');
+    await ultravoxSingleton.disconnect();
+    
     setUiState('processing');
     setIsProcessing(true);
 
