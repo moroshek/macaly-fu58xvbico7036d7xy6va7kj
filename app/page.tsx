@@ -344,8 +344,8 @@ export default function HomePage() {
 
   return (
     <>
-      {/* Session Manager - Always rendered to prevent remounting */}
-      <div key="ultravox-session-manager-stable-container" style={{ display: 'none' }}>
+      {/* Session Manager - Moved outside main content div to isolate from UI re-renders */}
+      <div key="ultravox-stable-root" style={{ position: 'fixed', top: -9999, left: -9999, width: 1, height: 1, overflow: 'hidden' }}>
         {sessionManager}
       </div>
       

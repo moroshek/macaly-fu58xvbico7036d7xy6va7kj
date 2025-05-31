@@ -79,7 +79,8 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
       prevCallIdRef.current = callId;
     }
 
-    // Since we've eliminated unmount cycles, we can proceed directly without delay
+    // Add a small delay to ensure state has settled after rapid unmount/remount cycles
+    const connectionDelay = hasAttemptedConnectionRef.current ? 0 : 100;
 
     const performConnectionSequence = async () => {
       if (!joinUrl || !callId) {
@@ -157,8 +158,14 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
           await ultravoxSession.connect(joinUrl);
           logger.log('[UltravoxSessionManager] ultravoxSession.connect() succeeded.');
           
-          // Mark this URL as used after successful connection
-          lastUsedJoinUrlRef.current = joinUrl;
+          // Only mark URL as used if we're still managing this session
+          // This prevents marking URLs as used when the component unmounts during connection
+          if (performingSessionManagementRef.current && activeConnectionUrlRef.current === joinUrl) {
+            lastUsedJoinUrlRef.current = joinUrl;
+            logger.log('[UltravoxSessionManager] Marked URL as successfully used.');
+          } else {
+            logger.warn('[UltravoxSessionManager] Connection succeeded but component state changed, not marking URL as used.');
+          }
         } finally {
           // Clear active connection tracking
           activeConnectionUrlRef.current = null;
@@ -209,7 +216,21 @@ export function UltravoxSessionManager(props: UltravoxSessionManagerProps) {
         setConnectionAttemptInProgress(true);
         setLastConnectionAttempt(Date.now());
         
-        performConnectionSequence();
+        // Add delay before connection to let state settle
+        if (connectionDelay > 0) {
+          logger.log(`[UltravoxSessionManager] Waiting ${connectionDelay}ms before connection attempt to let state settle.`);
+          setTimeout(() => {
+            // Double-check we still should connect after delay
+            if (shouldConnect && joinUrl === prevJoinUrlRef.current && callId === prevCallIdRef.current) {
+              performConnectionSequence();
+            } else {
+              logger.log('[UltravoxSessionManager] Connection conditions changed during delay, aborting.');
+              setConnectionAttemptInProgress(false);
+            }
+          }, connectionDelay);
+        } else {
+          performConnectionSequence();
+        }
       } else if (hasAttemptedConnectionRef.current && hasEncounteredErrorRef.current) {
         logger.log(`[UltravoxSessionManager] Connection previously attempted for callId ${effectCallIdLog} but encountered an error. Not retrying automatically.`);
       } else if (hasAttemptedConnectionRef.current && !hasEncounteredErrorRef.current) {
