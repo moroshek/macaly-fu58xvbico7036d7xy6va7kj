@@ -311,3 +311,60 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Modern Landing Page Animations */
+@keyframes shine {
+  0% { transform: translateX(-100%) translateY(-100%) rotate(45deg); }
+  100% { transform: translateX(100%) translateY(100%) rotate(45deg); }
+}
+
+@keyframes gradient {
+  0%, 100% { filter: hue-rotate(0deg); }
+  50% { filter: hue-rotate(10deg); }
+}
+
+@keyframes gradient-move {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 200% 0%; }
+}
+
+@keyframes pulse-slow {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-shine {
+  animation: shine 3s infinite;
+}
+
+.animate-gradient {
+  animation: gradient 5s ease infinite;
+}
+
+.animate-gradient-move {
+  background-size: 200% 100%;
+  animation: gradient-move 3s linear infinite;
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s ease-in-out infinite;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.5s ease;
+}
+
+.bg-size-200 {
+  background-size: 200% 100%;
+}
