@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npx next build:*)",
+      "Bash(npm install)",
+      "Bash(npm run typecheck:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node_modules/.bin/tsc:*)",
+      "Bash(git add:*)",
+      "Bash(git config:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(git commit:*)",
+      "Bash(grep:*)",
+      "Bash(git acp:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(rm:*)",
+      "Bash(npm run:*)"
+    ],
+    "deny": []
+  }
+}
