@@ -55,13 +55,16 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    logger.log('[Page] Relevant state change detected:', { 
-      uiState, 
-      uvClientStatus, 
-      appCallIdProvided: !!appCallId, 
-      shouldConnectUltravox, 
-      errorMsgPresent: !!appErrorMessage 
-    });
+    const config = getConfig();
+    if (config.enableDebugLogging) {
+      logger.debug('[Page] Relevant state change detected:', { 
+        uiState, 
+        uvClientStatus, 
+        appCallIdProvided: !!appCallId, 
+        shouldConnectUltravox, 
+        errorMsgPresent: !!appErrorMessage 
+      });
+    }
   }, [uiState, uvClientStatus, appCallId, shouldConnectUltravox, appErrorMessage]);
 
   const handleStartInterviewClick = useCallback(async () => {
@@ -201,7 +204,10 @@ export default function HomePage() {
     const currentUIState = useAppState.getState().uiState;
     const currentUVStatus = useAppState.getState().uvClientStatus;
     
-    logger.log('[Page] Manager Status Change received:', { status, details, currentUIState, currentUVStatus });
+    const config = getConfig();
+    if (config.enableDebugLogging) {
+      logger.debug('[Page] Manager Status Change received:', { status, details, currentUIState, currentUVStatus });
+    }
     
     // Only update UV client status if it's actually different
     if (currentUVStatus !== status) {
@@ -470,7 +476,10 @@ export default function HomePage() {
   }, []);
 
   const handleManagerExperimentalMessage = useCallback((message: any) => {
-    logger.log('[Page] Manager Experimental Message:', message);
+    const config = getConfig();
+    if (config.enableDebugLogging) {
+      logger.debug('[Page] Manager Experimental Message:', message);
+    }
   }, []);
 
   // Animation states
